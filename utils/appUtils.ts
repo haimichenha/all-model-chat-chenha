@@ -1,6 +1,6 @@
 import { ChatMessage, ContentPart, UploadedFile, ChatHistoryItem, AppSettings, ChatSettings, SavedChatSession } from '../types';
 import { ThemeColors } from '../constants/themeConstants';
-import { ALL_SUPPORTED_MIME_TYPES, SUPPORTED_IMAGE_MIME_TYPES } from '../constants/fileConstants';
+import { SUPPORTED_IMAGE_MIME_TYPES, SUPPORTED_TEXT_MIME_TYPES } from '../constants/fileConstants';
 import { logService } from '../services/logService';
 
 export { logService };
@@ -50,6 +50,7 @@ export const translations = {
     attachMenu_aria: { en: 'Attach file menu', zh: '附加文件菜单' },
     attachMenu_upload: { en: 'Upload from Device', zh: '从设备上传' },
     attachMenu_gallery: { en: 'Gallery', zh: '图库' },
+    attachMenu_uploadVideo: { en: 'Upload Video', zh: '上传视频' },
     attachMenu_takePhoto: { en: 'Take Photo', zh: '拍照' },
     attachMenu_recordAudio: { en: 'Record Audio', zh: '录音' },
     attachMenu_addById: { en: 'Add by File ID', zh: '通过文件 ID 添加' },
@@ -221,6 +222,10 @@ export const translations = {
     headerModelSelectorTooltip_action: { en: `Click to change, or press 'Tab' to cycle`, zh: `点击更改，或按 'Tab' 键循环切换` },
     headerModelAriaLabel_current: { en: 'Current AI Model', zh: '当前 AI 模型' },
     headerModelAriaLabel_action: { en: `Click to change model`, zh: `点击更改模型` },
+    
+    // HelpModal.tsx
+    helpModal_title: { en: 'Help & Commands', zh: '帮助和命令' },
+    helpModal_close_aria: { en: 'Close help modal', zh: '关闭帮助模态框' },
 };
 
 export const getActiveApiConfig = (appSettings: AppSettings): { apiKeysString: string | null } => {
@@ -263,8 +268,11 @@ export const getKeyForRequest = (
     return { key: randomKey, isNewKey: true };
 };
 
-export const getTranslator = (lang: 'en' | 'zh') => (key: keyof typeof translations, fallback?: string): string => {
-    return translations[key]?.[lang] ?? fallback ?? translations[key]?.['en'] ?? key;
+export const getTranslator = (lang: 'en' | 'zh') => (key: keyof typeof translations | string, fallback?: string): string => {
+    if (key in translations) {
+        return translations[key as keyof typeof translations]?.[lang] ?? fallback ?? translations[key as keyof typeof translations]?.['en'] ?? key;
+    }
+    return fallback ?? key;
 };
 
 export const generateUniqueId = () => `chat-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -329,6 +337,15 @@ export const fileToDataUrl = (file: File): Promise<string> => {
     });
 };
 
+export const fileToText = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = (error) => reject(error);
+        reader.readAsText(file, 'utf-8');
+    });
+};
+
 export const buildContentParts = async (text: string, files: UploadedFile[] | undefined): Promise<ContentPart[]> => {
   const dataParts: ContentPart[] = [];
 
@@ -338,7 +355,8 @@ export const buildContentParts = async (text: string, files: UploadedFile[] | un
         continue;
       }
       
-      if (SUPPORTED_IMAGE_MIME_TYPES.includes(file.type) && !file.fileUri) {
+      // Handle images (existing logic)
+      if (file.type && SUPPORTED_IMAGE_MIME_TYPES.includes(file.type) && !file.fileUri) {
         let base64Data = file.base64Data;
         
         // This is the new on-demand conversion logic
@@ -362,11 +380,44 @@ export const buildContentParts = async (text: string, files: UploadedFile[] | un
           }
         }
         
-        if (base64Data) {
+        if (base64Data && file.type) {
           dataParts.push({ inlineData: { mimeType: file.type, data: base64Data } });
         }
-      } else if (file.fileUri) {
+      } 
+      // Handle files uploaded to API (existing logic)
+      else if (file.fileUri && file.type) {
         dataParts.push({ fileData: { mimeType: file.type, fileUri: file.fileUri } });
+      } 
+      // Enhanced text file handling (optimized logic)
+      else if (file.rawFile && file.type && SUPPORTED_TEXT_MIME_TYPES.includes(file.type)) {
+        try {
+          const textContent = await fileToText(file.rawFile);
+          const fileExtension = file.name.split('.').pop()?.toLowerCase() || 'txt';
+          
+          // Create structured content with file context
+          const structuredContent = `**📄 文件内容 [${file.name}]**\n\n` +
+            `文件类型: ${file.type}\n` +
+            `文件大小: ${(file.size / 1024).toFixed(1)}KB\n` +
+            `文件格式: .${fileExtension}\n\n` +
+            `内容:\n${'```' + (fileExtension === 'json' ? 'json' : fileExtension === 'js' ? 'javascript' : fileExtension)}\n${textContent}\n${'```'}`;
+          
+          dataParts.push({ text: structuredContent });
+          logService.info(`Included enhanced text file content: ${file.name} (${file.type})`);
+        } catch (error) {
+          logService.error(`Failed to read text file: ${file.name}`, { error });
+          continue;
+        }
+      }
+      // Fallback for local text files with basic type (legacy support)
+      else if (file.rawFile && file.type === 'text/plain') {
+        try {
+          const textContent = await fileToText(file.rawFile);
+          dataParts.push({ text: `[文件: ${file.name}]\n\n${textContent}` });
+          logService.info(`Included local text file content: ${file.name}`);
+        } catch (error) {
+          logService.error(`Failed to read local text file: ${file.name}`, { error });
+          continue;
+        }
       }
     }
   }
@@ -471,22 +522,20 @@ export const applyImageCachePolicy = (sessions: SavedChatSession[]): SavedChatSe
 
     logService.debug('Applying time-based image cache policy: Pruning image data older than 24 hours.');
 
-
     sessionsCopy.forEach((session: SavedChatSession) => {
         if (session.messages && Array.isArray(session.messages)) {
-   
             session.messages.forEach((message: ChatMessage) => {
                 // 将消息的时间戳安全地转换为数字格式
                 const messageTime = new Date(message.timestamp).getTime();
 
-                
                 if (messageTime < twentyFourHoursAgo) {
                     if (message.files && Array.isArray(message.files)) {
                         message.files.forEach((file: UploadedFile) => {
-                          
-                            if (SUPPORTED_IMAGE_MIME_TYPES.includes(file.type)) {
+                            // Enhanced robustness: check if file.type exists before comparing
+                            if (file.type && SUPPORTED_IMAGE_MIME_TYPES.includes(file.type)) {
                                 if (file.dataUrl) delete file.dataUrl;
                                 if (file.base64Data) delete file.base64Data;
+                                logService.debug(`Pruned image data for ${file.name} (older than 24h)`);
                             }
                         });
                     }

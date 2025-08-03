@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, Dispatch, SetStateAction } from 'react';
 import { AppSettings, ChatSettings as IndividualChatSettings, UploadedFile } from '../types';
-import { ALL_SUPPORTED_MIME_TYPES, SUPPORTED_IMAGE_MIME_TYPES, SUPPORTED_TEXT_MIME_TYPES, TEXT_BASED_EXTENSIONS } from '../constants/fileConstants';
+import { ALL_SUPPORTED_MIME_TYPES, SUPPORTED_IMAGE_MIME_TYPES, TEXT_BASED_EXTENSIONS } from '../constants/fileConstants';
 import { generateUniqueId, getKeyForRequest, fileToDataUrl } from '../utils/appUtils';
 import { geminiServiceInstance } from '../services/geminiService';
 import { logService } from '../services/logService';
@@ -89,8 +89,21 @@ export const useFileHandling = ({
                 return;
             }
 
-            // This is the core logic change: should this file be uploaded or handled locally?
-            const shouldUploadFile = !SUPPORTED_IMAGE_MIME_TYPES.includes(effectiveMimeType) || appSettings.useFilesApiForImages;
+            // 检查是否为本地文本文件（从CreateTextFileEditor创建的）
+            const isLocalTextFile = (file as any).isLocalTextFile === true;
+            
+            // 检查是否为文本文件（可以本地处理）
+            const isTextFile = effectiveMimeType === 'text/plain';
+            
+            // 打印日志确认是否有标记为本地文本文件
+            if(isLocalTextFile) {
+                logService.info(`文件 ${file.name} 被标记为本地文本文件，将跳过API验证`);
+                console.log(`处理本地文本文件: ${file.name}, isLocalTextFile = ${isLocalTextFile}`);
+            }
+
+            // 对于文本文件，优先进行本地处理（除非用户明确要求上传）
+            const shouldProcessLocally = isLocalTextFile || (isTextFile && !appSettings.useFilesApiForImages);
+            const shouldUploadFile = (!shouldProcessLocally && !SUPPORTED_IMAGE_MIME_TYPES.includes(effectiveMimeType)) || appSettings.useFilesApiForImages;
 
             if (shouldUploadFile) {
                 // Handle all file types that need uploading (PDF, Text, Audio, and Images if setting is on)
@@ -119,16 +132,23 @@ export const useFileHandling = ({
                         setSelectedFiles(prev => prev.map(f => f.id === fileId ? { ...f, isProcessing: false, error: errorMsg, rawFile: undefined, uploadState: uploadStateUpdate, abortController: undefined, } : f));
                     }
                 } else {
-                    // Handle image locally with Data URLs for persistence (if setting is off)
+                    // Handle files that don't need uploading locally
                     const initialFileState: UploadedFile = { id: fileId, name: file.name, type: effectiveMimeType, size: file.size, isProcessing: true, progress: 0, uploadState: 'pending', rawFile: file };
                     setSelectedFiles(prev => [...prev, initialFileState]);
                     
-                    try {
-                        const dataUrl = await fileToDataUrl(file);
-                        setSelectedFiles(p => p.map(f => f.id === fileId ? { ...f, dataUrl, isProcessing: false, progress: 100, uploadState: 'active' } : f));
-                    } catch(error) {
-                        logService.error('Error creating data URL for image', { error });
-                        setSelectedFiles(prev => prev.map(f => f.id === fileId ? { ...f, isProcessing: false, error: 'Failed to create image preview.', uploadState: 'failed' } : f));
+                    if (shouldProcessLocally && isTextFile) {
+                        // Handle local text files (both created and uploaded) - no need to create data URL, just mark as active
+                        setSelectedFiles(p => p.map(f => f.id === fileId ? { ...f, isProcessing: false, progress: 100, uploadState: 'active' } : f));
+                        logService.info(`Local text file processed successfully: ${file.name}`);
+                    } else {
+                        // Handle images locally with Data URLs for persistence (if setting is off)
+                        try {
+                            const dataUrl = await fileToDataUrl(file);
+                            setSelectedFiles(p => p.map(f => f.id === fileId ? { ...f, dataUrl, isProcessing: false, progress: 100, uploadState: 'active' } : f));
+                        } catch(error) {
+                            logService.error('Error creating data URL for image', { error });
+                            setSelectedFiles(prev => prev.map(f => f.id === fileId ? { ...f, isProcessing: false, error: 'Failed to create image preview.', uploadState: 'failed' } : f));
+                        }
                     }
                 }
             });

@@ -295,19 +295,21 @@ export const AVAILABLE_TTS_VOICES: { id: string; name: string }[] = [
 export const APP_SETTINGS_KEY = 'chatAppSettings';
 export const PRELOADED_SCENARIO_KEY = 'chatPreloadedScenario';
 export const CHAT_HISTORY_SESSIONS_KEY = 'chatHistorySessions';
+export const CHAT_HISTORY_GROUPS_KEY = 'chatHistoryGroups';
 export const ACTIVE_CHAT_SESSION_ID_KEY = 'activeChatSessionId';
 
 export const DEFAULT_CHAT_SETTINGS = {
   modelId: DEFAULT_MODEL_ID,
-  temperature: DEFAULT_TEMPERATURE,
-  topP: DEFAULT_TOP_P,
-  showThoughts: DEFAULT_SHOW_THOUGHTS,
+  temperature: 0.7,
+  topP: 0.9,
+  showThoughts: false,
   systemInstruction: DEFAULT_SYSTEM_INSTRUCTION,
-  ttsVoice: DEFAULT_TTS_VOICE,
-  thinkingBudget: DEFAULT_THINKING_BUDGET,
+  ttsVoice: 'Puck',
+  thinkingBudget: 10000,
   lockedApiKey: null,
   isGoogleSearchEnabled: false,
   isCodeExecutionEnabled: false,
+  isUrlContextEnabled: false,
 };
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -317,6 +319,10 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   useCustomApiConfig: false,
   apiKey: null,
   apiProxyUrl: null,
+  apiConfigs: [],
+  activeApiConfigId: null,
+  systemPrompts: [],
+  activeSystemPromptId: null,
   language: 'system',
   isStreamingEnabled: DEFAULT_IS_STREAMING_ENABLED,
   transcriptionModelId: DEFAULT_TRANSCRIPTION_MODEL_ID,

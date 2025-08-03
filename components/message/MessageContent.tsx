@@ -12,6 +12,8 @@ import { Loader2, ChevronDown, Sigma } from 'lucide-react';
 import { ChatMessage, UploadedFile } from '../../types';
 import { FileDisplay } from './FileDisplay';
 import { CodeBlock } from './CodeBlock';
+import { MermaidBlock } from './MermaidBlock';
+import { GraphvizBlock } from './GraphvizBlock';
 import { translations } from '../../utils/appUtils';
 import { GroundedResponse } from './GroundedResponse';
 
@@ -111,6 +113,24 @@ export const MessageContent: React.FC<MessageContentProps> = React.memo(({ messa
       pre: (props: any) => {
         const { node, ...rest } = props;
         const children = (props.children[0] && props.children[0].type === 'code') ? props.children[0] : props.children;
+        
+        // 检查是否为代码块
+        if (children && children.props && children.props.className) {
+          const className = children.props.className;
+          const code = children.props.children?.[0] || '';
+          
+          // 检测 Mermaid 图表
+          if (className.includes('language-mermaid') && typeof code === 'string') {
+            return <MermaidBlock code={code.trim()} />;
+          }
+          
+          // 检测 Graphviz/DOT 图表
+          if ((className.includes('language-dot') || className.includes('language-graphviz')) && typeof code === 'string') {
+            return <GraphvizBlock code={code.trim()} />;
+          }
+        }
+        
+        // 普通代码块
         return <CodeBlock {...rest} onOpenHtmlPreview={onOpenHtmlPreview} expandCodeBlocksByDefault={expandCodeBlocksByDefault}>{children}</CodeBlock>;
       }
     }), [onOpenHtmlPreview, expandCodeBlocksByDefault]);

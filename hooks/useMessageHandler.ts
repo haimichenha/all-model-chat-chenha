@@ -439,11 +439,11 @@ export const useMessageHandler = ({
         };
 
         if (appSettings.isStreamingEnabled) {
-            await geminiServiceInstance.sendMessageStream(keyToUse, activeModelId, fullHistory, sessionToUpdate.systemInstruction, { temperature: sessionToUpdate.temperature, topP: sessionToUpdate.topP }, sessionToUpdate.showThoughts, sessionToUpdate.thinkingBudget, !!sessionToUpdate.isGoogleSearchEnabled, !!sessionToUpdate.isCodeExecutionEnabled, newAbortController.signal, streamOnPart, onThoughtChunk, streamOnError, streamOnComplete);
+            await geminiServiceInstance.sendMessageStream(keyToUse, activeModelId, fullHistory, sessionToUpdate.systemInstruction, { temperature: sessionToUpdate.temperature, topP: sessionToUpdate.topP }, sessionToUpdate.showThoughts, sessionToUpdate.thinkingBudget, !!sessionToUpdate.isGoogleSearchEnabled, !!sessionToUpdate.isCodeExecutionEnabled, !!sessionToUpdate.isUrlContextEnabled, newAbortController.signal, streamOnPart, onThoughtChunk, streamOnError, streamOnComplete);
         } else { 
-            await geminiServiceInstance.sendMessageNonStream(keyToUse, activeModelId, fullHistory, sessionToUpdate.systemInstruction, { temperature: sessionToUpdate.temperature, topP: sessionToUpdate.topP }, sessionToUpdate.showThoughts, sessionToUpdate.thinkingBudget, !!sessionToUpdate.isGoogleSearchEnabled, !!sessionToUpdate.isCodeExecutionEnabled, newAbortController.signal,
+            await geminiServiceInstance.sendMessageNonStream(keyToUse, activeModelId, fullHistory, sessionToUpdate.systemInstruction, { temperature: sessionToUpdate.temperature, topP: sessionToUpdate.topP }, sessionToUpdate.showThoughts, sessionToUpdate.thinkingBudget, !!sessionToUpdate.isGoogleSearchEnabled, !!sessionToUpdate.isCodeExecutionEnabled, !!sessionToUpdate.isUrlContextEnabled, newAbortController.signal,
                 streamOnError,
-                (parts, thoughtsText, usageMetadata, groundingMetadata) => {
+                (parts: Part[], thoughtsText?: string, usageMetadata?: UsageMetadata, groundingMetadata?: any) => {
                     for(const part of parts) {
                         streamOnPart(part);
                     }
@@ -555,6 +555,146 @@ export const useMessageHandler = ({
         });
     };
 
+    const handleProcessLongText = useCallback(async (text: string, fileName?: string) => {
+        const TEXT_LENGTH_THRESHOLD = 10000; // 超过10000字符就启用分块处理
+        
+        if (text.length <= TEXT_LENGTH_THRESHOLD) {
+            return; // 文本不够长，不需要分块处理
+        }
+
+        let sessionId = activeSessionId;
+        if (!sessionId) {
+            // 创建新会话
+            const newSessionId = generateUniqueId();
+            const newSession: SavedChatSession = {
+                id: newSessionId,
+                title: fileName ? `📄 ${fileName}` : '📄 长文本理解',
+                messages: [],
+                timestamp: Date.now(),
+                settings: { ...DEFAULT_CHAT_SETTINGS, ...appSettings },
+            };
+            updateAndPersistSessions(prev => [newSession, ...prev]);
+            setActiveSessionId(newSessionId);
+            sessionId = newSessionId;
+        }
+
+        const keyResult = getKeyForRequest(appSettings, currentChatSettings);
+        if ('error' in keyResult) {
+            setAppFileError(keyResult.error);
+            return;
+        }
+
+        const { key: keyToUse } = keyResult;
+        const newAbortController = new AbortController();
+        const processingId = generateUniqueId();
+        
+        setLoadingSessionIds(prev => new Set(prev).add(sessionId!));
+        activeJobs.current.set(processingId, newAbortController);
+
+        // 创建初始处理消息
+        const initialMessage: ChatMessage = {
+            id: generateUniqueId(),
+            role: 'model',
+            content: `🔄 正在智能分块处理长文本（${Math.ceil(text.length / 1000)}k字符）...`,
+            timestamp: new Date(),
+            isLoading: true,
+            isChunkedProcessing: true,
+            chunkIndex: 0,
+            totalChunks: 0,
+        };
+
+        updateAndPersistSessions(prev => prev.map(s => 
+            s.id === sessionId ? { ...s, messages: [...s.messages, initialMessage] } : s
+        ));
+
+        try {
+            await geminiServiceInstance.processTextInChunks(
+                keyToUse,
+                currentChatSettings.modelId || 'gemini-1.5-flash-latest',
+                text,
+                currentChatSettings.systemInstruction || '',
+                {
+                    temperature: currentChatSettings.temperature,
+                    topP: currentChatSettings.topP,
+                },
+                newAbortController.signal,
+                // onChunkProcessed
+                (chunkIndex: number, totalChunks: number, summary: string) => {
+                    const chunkMessage: ChatMessage = {
+                        id: generateUniqueId(),
+                        role: 'model',
+                        content: `📖 **第${chunkIndex}部分理解完成**（共${totalChunks}部分）\n\n${summary}`,
+                        timestamp: new Date(),
+                        isChunkedProcessing: true,
+                        chunkIndex,
+                        totalChunks,
+                    };
+
+                    updateAndPersistSessions(prev => prev.map(s => 
+                        s.id === sessionId 
+                            ? { 
+                                ...s, 
+                                messages: s.messages.map(msg => 
+                                    msg.id === initialMessage.id 
+                                        ? { ...msg, content: `🔄 正在智能分块处理长文本...（${chunkIndex}/${totalChunks}）` }
+                                        : msg
+                                ).concat(chunkMessage)
+                            }
+                            : s
+                    ));
+                },
+                // onComplete
+                (finalSummary: string) => {
+                    const finalMessage: ChatMessage = {
+                        id: generateUniqueId(),
+                        role: 'model',
+                        content: `✅ **完整理解报告**\n\n${finalSummary}\n\n---\n*已完成对长文本的智能分块理解，模型现在已充分掌握全部内容。*`,
+                        timestamp: new Date(),
+                        isSummary: true,
+                    };
+
+                    updateAndPersistSessions(prev => prev.map(s => 
+                        s.id === sessionId 
+                            ? { 
+                                ...s, 
+                                messages: s.messages.map(msg => 
+                                    msg.id === initialMessage.id 
+                                        ? { ...msg, content: '✅ 长文本分块处理完成', isLoading: false }
+                                        : msg
+                                ).concat(finalMessage)
+                            }
+                            : s
+                    ));
+
+                    setLoadingSessionIds(prev => {
+                        const newSet = new Set(prev);
+                        newSet.delete(sessionId!);
+                        return newSet;
+                    });
+                    activeJobs.current.delete(processingId);
+                },
+                // onError
+                (error: Error) => {
+                    handleApiError(error, sessionId!, initialMessage.id, 'ChunkedProcessing');
+                    setLoadingSessionIds(prev => {
+                        const newSet = new Set(prev);
+                        newSet.delete(sessionId!);
+                        return newSet;
+                    });
+                    activeJobs.current.delete(processingId);
+                }
+            );
+        } catch (error) {
+            handleApiError(error, sessionId!, initialMessage.id, 'ChunkedProcessing');
+            setLoadingSessionIds(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(sessionId!);
+                return newSet;
+            });
+            activeJobs.current.delete(processingId);
+        }
+    }, [activeSessionId, appSettings, currentChatSettings, setAppFileError, setActiveSessionId, setLoadingSessionIds, activeJobs, updateAndPersistSessions, handleApiError]);
+
     return {
         handleSendMessage,
         handleStopGenerating,
@@ -563,5 +703,6 @@ export const useMessageHandler = ({
         handleDeleteMessage,
         handleRetryMessage,
         handleTextToSpeech,
+        handleProcessLongText,
     };
 };

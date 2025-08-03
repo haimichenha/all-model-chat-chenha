@@ -1,15 +1,16 @@
 import { useEffect, useCallback, useRef, useState, useMemo } from 'react';
-import { AppSettings, ChatMessage, ChatSettings as IndividualChatSettings, SavedChatSession, UploadedFile } from '../types';
+import { AppSettings, ChatMessage, ChatSettings as IndividualChatSettings, SavedChatSession, UploadedFile, ChatGroup } from '../types';
 import { DEFAULT_CHAT_SETTINGS } from '../constants/appConstants';
 import { useModels } from './useModels';
 import { useChatHistory } from './useChatHistory';
 import { useFileHandling } from './useFileHandling';
 import { usePreloadedScenarios } from './usePreloadedScenarios';
 import { useMessageHandler } from './useMessageHandler';
+import { useChatGroups } from './useChatGroups';
 import { applyImageCachePolicy, generateUniqueId, logService } from '../utils/appUtils';
 import { CHAT_HISTORY_SESSIONS_KEY } from '../constants/appConstants';
 
-export const useChat = (appSettings: AppSettings) => {
+export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean = false) => {
     // 1. Core application state, now managed centrally in the main hook
     const [savedSessions, setSavedSessions] = useState<SavedChatSession[]>([]);
     const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -34,13 +35,68 @@ export const useChat = (appSettings: AppSettings) => {
     const userScrolledUp = useRef<boolean>(false);
     const [showScrollToBottom, setShowScrollToBottom] = useState<boolean>(false);
 
-    // Wrapper function to persist sessions to localStorage whenever they are updated
+    // [核心优化] 实现了智能存储和自动清理功能的全新 updateAndPersistSessions 函数
     const updateAndPersistSessions = useCallback((updater: (prev: SavedChatSession[]) => SavedChatSession[]) => {
         setSavedSessions(prevSessions => {
-            const newSessions = updater(prevSessions);
-            const sessionsForStorage = applyImageCachePolicy(newSessions);
-            localStorage.setItem(CHAT_HISTORY_SESSIONS_KEY, JSON.stringify(sessionsForStorage));
-            return newSessions;
+            let newSessions = updater(prevSessions);
+
+            const attemptToSave = (sessionsToSave: SavedChatSession[]): boolean => {
+                try {
+                    // 我们先应用图片缓存策略，这本身就能节省一些空间
+                    const sessionsForStorage = applyImageCachePolicy(sessionsToSave);
+                    localStorage.setItem(CHAT_HISTORY_SESSIONS_KEY, JSON.stringify(sessionsForStorage));
+                    logService.info(`Successfully saved ${sessionsToSave.length} sessions to localStorage.`);
+                    return true;
+                } catch (error: any) {
+                    // 捕获"超出配额"的错误
+                    if (error.name === 'QuotaExceededError' || (error.message && error.message.toLowerCase().includes('quota'))) {
+                        logService.warn('LocalStorage quota exceeded. Attempting to prune sessions.');
+                        return false;
+                    }
+                    // 对于其他未知错误，我们只记录日志，不进行清理
+                    logService.error('Failed to save sessions to localStorage due to an unexpected error:', error);
+                    return true; 
+                }
+            };
+
+            // 第一次尝试保存
+            if (attemptToSave(newSessions)) {
+                return newSessions; // 保存成功，直接更新状态并返回
+            }
+
+            // --- 如果保存失败，启动自动清理逻辑 ---
+            alert('浏览器存储空间已满。为保存最新记录，将自动清理最旧的、未固定的聊天会话。');
+            
+            let prunedSessions = [...newSessions];
+            let prunedCount = 0;
+
+            // 循环清理，直到保存成功
+            while (!attemptToSave(prunedSessions)) {
+                // 按时间戳升序排序，最旧的在最前面
+                const sorted = prunedSessions.sort((a, b) => a.timestamp - b.timestamp);
+                
+                // 找到第一个可以被删除的会话（即没有被固定的）
+                const indexToRemove = sorted.findIndex(s => !s.isPinned);
+
+                if (indexToRemove === -1) {
+                    // 如果所有会话都已被固定，但空间仍然不足
+                    logService.error('Pruning failed: No more non-pinned sessions to remove, but quota is still exceeded.');
+                    alert('自动清理失败：所有会话均已固定，无法腾出足够空间。请手动导出并清理聊天记录以防数据丢失。');
+                    // 即使无法保存，也要在内存中返回最新的状态，避免丢失当前操作
+                    return newSessions;
+                }
+                
+                const sessionToRemove = sorted[indexToRemove];
+                prunedSessions = prunedSessions.filter(s => s.id !== sessionToRemove.id);
+                prunedCount++;
+                logService.info(`Pruning session: "${sessionToRemove.title}" (ID: ${sessionToRemove.id})`);
+            }
+            
+            if (prunedCount > 0) {
+                logService.info(`Successfully pruned ${prunedCount} session(s) and saved the history.`);
+            }
+            
+            return prunedSessions; // 返回清理后的会话列表
         });
     }, []);
 
@@ -54,18 +110,8 @@ export const useChat = (appSettings: AppSettings) => {
     const isLoading = useMemo(() => loadingSessionIds.has(activeSessionId ?? ''), [loadingSessionIds, activeSessionId]);
     
     // 3. Child hooks for modular logic
-    const { apiModels, isModelsLoading, modelsLoadingError } = useModels(appSettings);
-    const historyHandler = useChatHistory({
-        appSettings,
-        setSavedSessions,
-        setActiveSessionId,
-        setEditingMessageId,
-        setCommandedInput,
-        setSelectedFiles,
-        activeJobs,
-        updateAndPersistSessions,
-        activeChat,
-    });
+    // [修改] 3. 将信号灯状态传递给 useModels
+    const { apiModels, isModelsLoading, modelsLoadingError } = useModels(appSettings, isServiceInitialized);
     
     const setCurrentChatSettings = useCallback((updater: (prevSettings: IndividualChatSettings) => IndividualChatSettings) => {
         if (!activeSessionId) return;
@@ -88,7 +134,7 @@ export const useChat = (appSettings: AppSettings) => {
         currentChatSettings,
         setCurrentChatSettings: setCurrentChatSettings,
     });
-    const scenarioHandler = usePreloadedScenarios({ startNewChat: historyHandler.startNewChat, updateAndPersistSessions });
+    
     const messageHandler = useMessageHandler({
         appSettings,
         messages,
@@ -112,6 +158,24 @@ export const useChat = (appSettings: AppSettings) => {
         updateAndPersistSessions,
     });
 
+    // historyHandler now depends on messageHandler
+    const historyHandler = useChatHistory({
+        appSettings,
+        setSavedSessions,
+        setActiveSessionId,
+        setEditingMessageId,
+        setCommandedInput,
+        setSelectedFiles,
+        activeJobs,
+        updateAndPersistSessions,
+        activeChat,
+        onProcessLongText: messageHandler.handleProcessLongText, // Connect the modules
+    });
+    
+    const groupsHandler = useChatGroups({ updateAndPersistSessions });
+    
+    const scenarioHandler = usePreloadedScenarios({ startNewChat: historyHandler.startNewChat, updateAndPersistSessions });
+
     const handleExportAllSessions = useCallback(() => {
         alert('即将执行真正的下载代码！'); 
         if (savedSessions.length === 0) {
@@ -125,7 +189,7 @@ export const useChat = (appSettings: AppSettings) => {
         const fileContent = savedSessions
             .sort((a, b) => a.timestamp - b.timestamp) // 按时间从旧到新排序
             .map(session => {
-                const sessionHeader = `==================================================\n# 聊天会话: ${session.title}\n# 会话 ID: ${session.id}\n# 创建时间: ${new Date(session.timestamp).toLocaleString()}\n==================================================\n\n`;
+                const sessionHeader = `==================================================\n# 聊天会话: ${session.title}\n# 会话 ID: ${session.id}\n# 创建时间: ${new Date(session.timestamp).toLocaleString()}\n# 系统指令: ${session.settings.systemInstruction || '(无)'}\n# 模型设置: ${session.settings.modelId} (温度: ${session.settings.temperature}, Top-P: ${session.settings.topP})\n==================================================\n\n`;
 
                 const messagesContent = session.messages
                     .map(message => {
@@ -273,6 +337,15 @@ export const useChat = (appSettings: AppSettings) => {
         }));
     }, [activeSessionId, isLoading, setCurrentChatSettings, messageHandler]);
 
+    const toggleUrlContext = useCallback(() => {
+        if (!activeSessionId) return;
+        if (isLoading) messageHandler.handleStopGenerating();
+        setCurrentChatSettings(prev => ({
+            ...prev,
+            isUrlContextEnabled: !prev.isUrlContextEnabled,
+        }));
+    }, [activeSessionId, isLoading, setCurrentChatSettings, messageHandler]);
+
     return {
         messages,
         isLoading,
@@ -287,6 +360,7 @@ export const useChat = (appSettings: AppSettings) => {
         appFileError,
         isAppProcessingFile,
         savedSessions,
+        savedGroups: groupsHandler.savedGroups,
         activeSessionId,
         apiModels,
         isModelsLoading,
@@ -313,11 +387,18 @@ export const useChat = (appSettings: AppSettings) => {
         handleDeleteChatHistorySession: historyHandler.handleDeleteChatHistorySession,
         handleRenameSession: historyHandler.handleRenameSession,
         handleTogglePinSession: historyHandler.handleTogglePinSession,
+        handleAddNewGroup: groupsHandler.handleAddNewGroup,
+        handleDeleteGroup: groupsHandler.handleDeleteGroup,
+        handleRenameGroup: groupsHandler.handleRenameGroup,
+        handleMoveSessionToGroup: groupsHandler.handleMoveSessionToGroup,
+        handleToggleGroupExpansion: groupsHandler.handleToggleGroupExpansion,
+        handleTogglePinGroup: groupsHandler.handleTogglePinGroup,
         clearCacheAndReload: historyHandler.clearCacheAndReload,
         handleSaveAllScenarios: scenarioHandler.handleSaveAllScenarios,
         handleLoadPreloadedScenario: scenarioHandler.handleLoadPreloadedScenario,
         handleImportPreloadedScenario: scenarioHandler.handleImportPreloadedScenario,
         handleExportPreloadedScenario: scenarioHandler.handleExportPreloadedScenario,
+        handleImportSessions: historyHandler.handleImportSessions,
         handleScroll,
         handleAppDragEnter: fileHandler.handleAppDragEnter,
         handleAppDragOver: fileHandler.handleAppDragOver,
@@ -326,11 +407,13 @@ export const useChat = (appSettings: AppSettings) => {
         handleCancelFileUpload: fileHandler.handleCancelFileUpload,
         handleAddFileById: fileHandler.handleAddFileById,
         handleTextToSpeech: messageHandler.handleTextToSpeech,
+        handleProcessLongText: messageHandler.handleProcessLongText,
         setCurrentChatSettings,
         showScrollToBottom,
         scrollToBottom,
         toggleGoogleSearch,
         toggleCodeExecution,
+        toggleUrlContext,
 
         handleExportAllSessions,
     };

@@ -20,6 +20,9 @@ const App: React.FC = () => {
   const { appSettings, setAppSettings, currentTheme, language } = useAppSettings();
   const t = getTranslator(language);
   
+  // [新增] 1. 创建"信号灯"状态
+  const [isServiceInitialized, setIsServiceInitialized] = useState<boolean>(false);
+  
   const {
       messages,
       isLoading,
@@ -30,10 +33,10 @@ const App: React.FC = () => {
       selectedFiles,
       setSelectedFiles,
       editingMessageId,
-      setEditingMessageId,
       appFileError,
       isAppProcessingFile,
       savedSessions,
+      savedGroups,
       activeSessionId,
       apiModels,
       isModelsLoading,
@@ -60,6 +63,12 @@ const App: React.FC = () => {
       handleDeleteChatHistorySession,
       handleRenameSession,
       handleTogglePinSession,
+      handleAddNewGroup,
+      handleDeleteGroup,
+      handleRenameGroup,
+      handleMoveSessionToGroup,
+      handleToggleGroupExpansion,
+      handleTogglePinGroup,
       clearCacheAndReload,
       handleSaveAllScenarios,
       handleLoadPreloadedScenario,
@@ -73,6 +82,7 @@ const App: React.FC = () => {
       handleCancelFileUpload,
       handleAddFileById,
       handleTextToSpeech,
+      handleImportSessions,
       setCurrentChatSettings,
       showScrollToBottom,
       scrollToBottom,
@@ -80,11 +90,14 @@ const App: React.FC = () => {
       toggleCodeExecution,
 
       handleExportAllSessions,
-  } = useChat(appSettings);
+  } = useChat(appSettings, isServiceInitialized);
 
+  // [修改] 2. 在注入设置成功后，将信号灯变为绿色
   useEffect(() => {
- 
-    geminiServiceInstance.updateSettings(appSettings);
+    if (appSettings) {
+      geminiServiceInstance.updateSettings(appSettings);
+      setIsServiceInitialized(true); // <-- 绿灯亮起！
+    }
   }, [appSettings]);
 
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
@@ -119,6 +132,47 @@ const App: React.FC = () => {
   useEffect(() => {
     logService.info('App initialized.');
   }, []);
+
+  // File import functionality
+  const handleImportChatHistory = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,.txt';
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      try {
+        const content = await file.text();
+        
+        if (file.name.endsWith('.json')) {
+          // Try to parse as JSON (structured export)
+          try {
+            const parsed = JSON.parse(content);
+            if (Array.isArray(parsed)) {
+              handleImportSessions(parsed);
+              logService.info(`Successfully imported ${parsed.length} sessions from JSON file`);
+            } else {
+              // Single session
+              handleImportSessions([parsed]);
+              logService.info('Successfully imported 1 session from JSON file');
+            }
+          } catch (jsonError) {
+            logService.error('Failed to parse JSON file:', jsonError);
+            alert('文件格式错误：无法解析 JSON 文件');
+          }
+        } else {
+          // Handle as plain text - trigger chunked processing
+          handleImportSessions([], content, file.name);
+          logService.info(`Imported and processing text file: ${file.name}`);
+        }
+      } catch (error) {
+        logService.error('Failed to read file:', error);
+        alert('读取文件失败');
+      }
+    };
+    input.click();
+  }, [handleImportSessions]);
   
   // Memory management for file previews
   const prevSelectedFilesRef = useRef<UploadedFile[]>([]);
@@ -228,6 +282,8 @@ const App: React.FC = () => {
         isOpen={isHistorySidebarOpen}
         onToggle={() => setIsHistorySidebarOpen(prev => !prev)}
         sessions={savedSessions}
+        groups={savedGroups}
+        savedGroups={savedGroups}
         activeSessionId={activeSessionId}
         loadingSessionIds={loadingSessionIds}
         onSelectSession={(id) => loadChatSession(id, savedSessions)}
@@ -236,6 +292,13 @@ const App: React.FC = () => {
         onRenameSession={handleRenameSession}
         onTogglePinSession={handleTogglePinSession}
         onExportAllSessions={handleExportAllSessions}
+        onImportSessions={handleImportChatHistory}
+        onAddNewGroup={handleAddNewGroup}
+        onDeleteGroup={handleDeleteGroup}
+        onRenameGroup={handleRenameGroup}
+        onMoveSessionToGroup={handleMoveSessionToGroup}
+        onToggleGroupExpansion={handleToggleGroupExpansion}
+        onTogglePinGroup={handleTogglePinGroup}
         themeColors={currentTheme.colors}
         t={t}
         language={language}
@@ -261,6 +324,7 @@ const App: React.FC = () => {
           onOpenSettingsModal={() => setIsSettingsModalOpen(true)}
           onOpenScenariosModal={() => setIsPreloadedMessagesModalOpen(true)}
           onToggleHistorySidebar={() => setIsHistorySidebarOpen(prev => !prev)}
+          onOpenLogViewer={() => setIsLogViewerOpen(true)}
           isLoading={isLoading}
           currentModelName={getCurrentModelDisplayName()}
           availableModels={apiModels}
@@ -362,6 +426,19 @@ const App: React.FC = () => {
           onToggleGoogleSearch={toggleGoogleSearch}
           isCodeExecutionEnabled={!!currentChatSettings.isCodeExecutionEnabled}
           onToggleCodeExecution={toggleCodeExecution}
+          isUrlContextEnabled={!!currentChatSettings.isUrlContextEnabled}
+          onToggleUrlContext={() => {}}
+          onClearChat={() => handleClearCurrentChat()}
+          onNewChat={() => startNewChat()}
+          onOpenSettings={() => setIsSettingsModalOpen(true)}
+          onToggleCanvasPrompt={handleLoadCanvasHelperPromptAndSave}
+          availableModels={apiModels}
+          onSelectModel={(modelId) => setCurrentChatSettings(prev => ({ ...prev, model: modelId }))}
+          onTogglePinCurrentSession={() => activeSessionId && handleTogglePinSession(activeSessionId)}
+          onRetryLastTurn={() => {}}
+          onEditLastUserMessage={() => {}}
+          onAttachmentAction={() => {}}
+          setIsHelpModalOpen={() => {}}
         />
       </div>
     </div>

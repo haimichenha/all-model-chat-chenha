@@ -24,7 +24,7 @@ interface SettingsModalProps {
   onClearAllHistory: () => void;
   onClearCache: () => void;
   onOpenLogViewer: () => void;
-  t: (key: keyof typeof translations) => string;
+  t: (key: keyof typeof translations | string) => string;
 }
 
 type SettingsTab = 'general' | 'api' | 'model';
@@ -36,6 +36,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [settings, setSettings] = useState(currentSettings);
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0); // 用于触发子组件刷新
   
   const headingIconSize = getResponsiveValue(18, 20);
   const tabIconSize = getResponsiveValue(16, 18);
@@ -103,7 +104,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="space-y-4">
                   <AppearanceSection
                     themeId={settings.themeId}
-                    setThemeId={(val) => updateSetting('themeId', val)}
+                    setThemeId={(val) => updateSetting('themeId', val as 'system' | 'onyx' | 'pearl')}
                     availableThemes={availableThemes}
                     baseFontSize={settings.baseFontSize}
                     setBaseFontSize={(val) => updateSetting('baseFontSize', val)}
@@ -115,6 +116,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     onClearHistory={() => { onClearAllHistory(); onClose(); }}
                     onClearCache={onClearCache}
                     onOpenLogViewer={onOpenLogViewer}
+                    currentSystemInstruction={settings.systemInstruction}
+                    onImportSuccess={(newStore, currentSystemInstruction) => {
+                      // 从新存储中获取API配置，并应用到当前设置
+                      if (newStore.apiConfigs && newStore.apiConfigs.length > 0) {
+                        const activeConfigId = newStore.lastSelectedApiConfigId;
+                        const activeConfig = activeConfigId 
+                          ? newStore.apiConfigs.find(c => c.id === activeConfigId)
+                          : newStore.apiConfigs.find(c => c.isDefault) || newStore.apiConfigs[0];
+                          
+                        if (activeConfig) {
+                          updateSetting('apiKey', activeConfig.apiKey);
+                          updateSetting('apiProxyUrl', activeConfig.apiProxyUrl || null);
+                          updateSetting('activeApiConfigId', activeConfig.id);
+                          updateSetting('useCustomApiConfig', true);
+                        }
+                      }
+                      
+                      // 优先使用导入的当前系统指令，否则使用第一个系统提示词模板
+                      if (currentSystemInstruction !== undefined) {
+                        updateSetting('systemInstruction', currentSystemInstruction);
+                      } else if (newStore.systemPrompts && newStore.systemPrompts.length > 0) {
+                        updateSetting('systemInstruction', newStore.systemPrompts[0].prompt);
+                      }
+                      
+                      // 触发刷新以更新 ApiConfigSection 组件
+                      setRefreshTrigger(prev => prev + 1);
+                      
+                      alert('设置已即时应用！');
+                    }}
+                    refreshTrigger={refreshTrigger}
                     t={t}
                   />
                 </div>
@@ -123,10 +154,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <ApiConfigSection
                   useCustomApiConfig={settings.useCustomApiConfig}
                   setUseCustomApiConfig={(val) => updateSetting('useCustomApiConfig', val)}
-                  apiKey={settings.apiKey}
-                  setApiKey={(val) => updateSetting('apiKey', val)}
-                  apiProxyUrl={settings.apiProxyUrl}
-                  setApiProxyUrl={(val) => updateSetting('apiProxyUrl', val)}
+                  activeApiConfigId={settings.activeApiConfigId}
+                  onActiveConfigChange={(config) => {
+                    if (config) {
+                      updateSetting('apiKey', config.apiKey);
+                      updateSetting('apiProxyUrl', config.apiProxyUrl || null);
+                      updateSetting('activeApiConfigId', config.id);
+                    } else {
+                      updateSetting('apiKey', null);
+                      updateSetting('apiProxyUrl', null);
+                      updateSetting('activeApiConfigId', null);
+                    }
+                  }}
+                  refreshTrigger={refreshTrigger}
                   t={t}
                 />
               )}

@@ -4,7 +4,7 @@ import { geminiServiceInstance } from '../services/geminiService';
 import { TAB_CYCLE_MODELS } from '../constants/appConstants';
 import { getActiveApiConfig } from '../utils/appUtils';
 
-export const useModels = (appSettings: AppSettings) => {
+export const useModels = (appSettings: AppSettings, isServiceInitialized: boolean = false) => {
     const [apiModels, setApiModels] = useState<ModelOption[]>([]);
     const [modelsLoadingError, setModelsLoadingError] = useState<string | null>(null);
     const [isModelsLoading, setIsModelsLoading] = useState<boolean>(true);
@@ -67,9 +67,13 @@ export const useModels = (appSettings: AppSettings) => {
         setIsModelsLoading(false);
     }, [appSettings]);
 
+    // [修改] 2. useEffect 现在依赖 isServiceInitialized
     useEffect(() => {
-        fetchAndSetModels();
-    }, [fetchAndSetModels]);
+        // 只有当信号灯为绿色时，才执行获取模型的逻辑
+        if (isServiceInitialized) {
+            fetchAndSetModels();
+        }
+    }, [isServiceInitialized, fetchAndSetModels]); // <--- 关键依赖项
 
     useEffect(() => {
         const handleOnline = () => {

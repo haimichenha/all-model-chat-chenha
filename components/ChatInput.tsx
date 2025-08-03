@@ -1,6 +1,6 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { ArrowUp, Ban, Paperclip, XCircle, Plus, X, Edit2, UploadCloud, FileSignature, Link2, Camera, Mic, Loader2, StopCircle, Image, SlidersHorizontal, Globe, Check, Terminal, FileVideo } from 'lucide-react';
-import { UploadedFile, AppSettings } from '../types';
+import { ArrowUp, Ban, XCircle, Plus, X, Edit2, UploadCloud, FileSignature, Link2, Camera, Mic, Loader2, Image, SlidersHorizontal, Globe, Check, Terminal, FileVideo } from 'lucide-react';
+import { UploadedFile, AppSettings, ModelOption } from '../types';
 import { ALL_SUPPORTED_MIME_TYPES, SUPPORTED_IMAGE_MIME_TYPES } from '../constants/fileConstants';
 import { translations, getActiveApiConfig, getResponsiveValue } from '../utils/appUtils';
 import { SelectedFileDisplay } from './chat/SelectedFileDisplay';
@@ -8,6 +8,8 @@ import { geminiServiceInstance } from '../services/geminiService';
 import { CreateTextFileEditor } from './chat/CreateTextFileEditor';
 import { CameraCapture } from './chat/CameraCapture';
 import { AudioRecorder } from './chat/AudioRecorder';
+import { SlashCommandMenu } from './chat/input/SlashCommandMenu';
+import { useSlashCommands } from '../hooks/useSlashCommands';
 
 interface ChatInputProps {
   appSettings: AppSettings;
@@ -23,6 +25,7 @@ interface ChatInputProps {
   onProcessFiles: (files: FileList | File[]) => Promise<void>;
   onAddFileById: (fileId: string) => Promise<void>;
   onCancelUpload: (fileId: string) => void;
+  onTranscribeAudio?: (file: File) => Promise<string | null>;
   isProcessingFile: boolean; 
   fileError: string | null;
   t: (key: keyof typeof translations) => string;
@@ -35,6 +38,19 @@ interface ChatInputProps {
   onToggleGoogleSearch: () => void;
   isCodeExecutionEnabled: boolean;
   onToggleCodeExecution: () => void;
+  isUrlContextEnabled?: boolean;
+  onToggleUrlContext?: () => void;
+  onClearChat?: () => void;
+  onNewChat?: () => void;
+  onOpenSettings?: () => void;
+  onToggleCanvasPrompt?: () => void;
+  availableModels?: ModelOption[];
+  onSelectModel?: (modelId: string) => void;
+  onTogglePinCurrentSession?: () => void;
+  onRetryLastTurn?: () => void;
+  onEditLastUserMessage?: () => void;
+  onAttachmentAction?: () => void;
+  setIsHelpModalOpen?: (open: boolean) => void;
 }
 
 const INITIAL_TEXTAREA_HEIGHT_PX = 28;
@@ -62,6 +78,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   transcriptionModelId, isTranscriptionThinkingEnabled,
   isGoogleSearchEnabled, onToggleGoogleSearch,
   isCodeExecutionEnabled, onToggleCodeExecution,
+  onToggleUrlContext,
+  onClearChat, onNewChat, onOpenSettings, onToggleCanvasPrompt,
+  availableModels = [], onSelectModel,
+  onTogglePinCurrentSession, onRetryLastTurn, onEditLastUserMessage,
+  onAttachmentAction, setIsHelpModalOpen,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -92,6 +113,36 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
   const [isWaitingForUpload, setIsWaitingForUpload] = useState(false);
+
+  // 快捷命令功能
+  const {
+    slashCommandState,
+    handleCommandSelect,
+    handleInputChange: handleSlashInputChange,
+    handleSlashCommandExecution,
+    handleKeyNavigation,
+  } = useSlashCommands({
+    inputText,
+    setInputText,
+    textareaRef,
+    availableModels,
+    onSelectModel: onSelectModel || (() => {}),
+    onNewChat: onNewChat || (() => {}),
+    onClearChat: onClearChat || (() => {}),
+    onOpenSettings: onOpenSettings || (() => {}),
+    onTogglePinCurrentSession: onTogglePinCurrentSession || (() => {}),
+    onRetryLastTurn: onRetryLastTurn || (() => {}),
+    onEditLastUserMessage: onEditLastUserMessage || (() => {}),
+    onStopGenerating,
+    onToggleGoogleSearch,
+    onToggleCodeExecution,
+    onToggleUrlContext: onToggleUrlContext || (() => {}),
+    onToggleCanvasPrompt: onToggleCanvasPrompt || (() => {}),
+    onAttachmentAction: onAttachmentAction || (() => {}),
+    onMessageSent,
+    setIsHelpModalOpen: setIsHelpModalOpen || (() => {}),
+    t: t as (key: string) => string,
+  });
 
   useEffect(() => {
     if (commandedInput) {
@@ -202,6 +253,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // 检查是否是快捷命令
+    if (inputText.startsWith('/')) {
+      handleSlashCommandExecution(inputText);
+      return;
+    }
+    
     if (canSend) {
         const filesAreStillProcessing = selectedFiles.some(f => f.isProcessing);
         if (filesAreStillProcessing) {
@@ -247,6 +305,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     justInitiatedFileOpRef.current = true;
     const finalFilename = filename.trim() ? sanitizeFilename(filename) : `custom-text-${Date.now()}.txt`;
     const newFile = new File([content], finalFilename, { type: "text/plain" });
+    
+    // 标记为本地文本文件，跳过API验证
+    Object.defineProperty(newFile, 'isLocalTextFile', {
+      value: true,
+      writable: false
+    });
+    
+    console.log('创建本地文本文件:', finalFilename, '标记isLocalTextFile =', (newFile as any).isLocalTextFile);
     await onProcessFiles([newFile]);
     setShowCreateTextFileEditor(false);
   };
@@ -412,10 +478,28 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             </div>
             
             <form onSubmit={handleSubmit} className={`relative ${isAnimatingSend ? 'form-send-animate' : ''}`}>
+                <SlashCommandMenu
+                  isOpen={slashCommandState.isOpen}
+                  commands={slashCommandState.filteredCommands}
+                  selectedIndex={slashCommandState.selectedIndex}
+                  onSelect={handleCommandSelect}
+                />
                 <div className="flex flex-col gap-1 rounded-2xl border border-[var(--theme-border-secondary)] bg-[var(--theme-bg-input)] px-2 py-1 shadow-lg focus-within:border-transparent focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-offset-[var(--theme-bg-secondary)] focus-within:ring-[var(--theme-border-focus)] transition-all duration-200">
                     <textarea
-                        ref={textareaRef} value={inputText} onChange={e => setInputText(e.target.value)}
+                        ref={textareaRef} value={inputText} onChange={e => {
+                          const value = e.target.value;
+                          setInputText(value);
+                          handleSlashInputChange(value);
+                        }}
                         onKeyPress={handleKeyPress} onPaste={handlePaste}
+                        onKeyDown={(e) => {
+                          if (!handleKeyNavigation(e)) {
+                            // 如果快捷命令没有处理这个键，继续其他处理
+                            if (e.key === 'Enter' && !e.shiftKey && slashCommandState.isOpen) {
+                              e.preventDefault();
+                            }
+                          }
+                        }}
                         placeholder={t('chatInputPlaceholder')}
                         className="w-full bg-transparent border-0 resize-none px-1.5 py-1 text-base placeholder:text-[var(--theme-text-tertiary)] focus:ring-0 focus:outline-none custom-scrollbar"
                         style={{ height: `${getResponsiveValue(24, INITIAL_TEXTAREA_HEIGHT_PX)}px` }}

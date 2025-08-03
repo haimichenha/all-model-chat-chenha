@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SavedChatSession } from '../types';
-import { Edit3, Trash2, X, Search, Menu, MoreHorizontal, Pin, PinOff, Download } from 'lucide-react';   //
+import { SavedChatSession, ChatGroup } from '../types';
+import { Edit3, Trash2, X, Search, Menu, MoreHorizontal, Pin, PinOff, Download, Upload, Plus } from 'lucide-react';
 import { translations } from '../utils/appUtils';
 
 
@@ -8,6 +8,8 @@ interface HistorySidebarProps {
   isOpen: boolean;
   onToggle: () => void;
   sessions: SavedChatSession[];
+  groups?: ChatGroup[]; // 添加群组支持
+  savedGroups?: ChatGroup[]; // 保存的群组列表
   activeSessionId: string | null;
   loadingSessionIds: Set<string>;
   onSelectSession: (sessionId: string) => void;
@@ -15,9 +17,15 @@ interface HistorySidebarProps {
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, newTitle: string) => void;
   onTogglePinSession: (sessionId: string) => void;
-
   onExportAllSessions: () => void;
-
+  onImportSessions: () => void; // 新增导入功能
+  // 群组相关的处理器
+  onAddNewGroup?: (name: string) => void;
+  onDeleteGroup?: (groupId: string) => void;
+  onRenameGroup?: (groupId: string, newTitle: string) => void;
+  onMoveSessionToGroup?: (sessionId: string, groupId: string | null) => void;
+  onToggleGroupExpansion?: (groupId: string) => void;
+  onTogglePinGroup?: (groupId: string) => void;
   themeColors: {
     bgPrimary: string;
     bgSecondary: string;
@@ -38,6 +46,8 @@ export const HistorySidebar: React.FC<HistorySidebarProps> = ({
   isOpen,
   onToggle,
   sessions,
+  groups = [], // 默认为空数组
+  savedGroups = [], // 保存的群组列表
   activeSessionId,
   loadingSessionIds,
   onSelectSession,
@@ -45,9 +55,14 @@ export const HistorySidebar: React.FC<HistorySidebarProps> = ({
   onDeleteSession,
   onRenameSession,
   onTogglePinSession,
-
   onExportAllSessions,
-  
+  onImportSessions, // 新增导入功能
+  onAddNewGroup,
+  onDeleteGroup,
+  onRenameGroup,
+  onMoveSessionToGroup,
+  onToggleGroupExpansion,
+  onTogglePinGroup,
   themeColors,
   t,
   language,
@@ -56,6 +71,8 @@ export const HistorySidebar: React.FC<HistorySidebarProps> = ({
   const [isSearching, setIsSearching] = useState(false);
   const [editingSession, setEditingSession] = useState<{ id: string, title: string } | null>(null);
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const [isAddingGroup, setIsAddingGroup] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
 
@@ -100,6 +117,23 @@ export const HistorySidebar: React.FC<HistorySidebarProps> = ({
       handleRenameConfirm();
     } else if (e.key === 'Escape') {
       handleRenameCancel();
+    }
+  };
+
+  const handleCreateGroup = () => {
+    if (newGroupName.trim() && onAddNewGroup) {
+      onAddNewGroup(newGroupName.trim());
+      setNewGroupName('');
+      setIsAddingGroup(false);
+    }
+  };
+
+  const handleCreateGroupKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleCreateGroup();
+    } else if (e.key === 'Escape') {
+      setIsAddingGroup(false);
+      setNewGroupName('');
     }
   };
 
@@ -153,19 +187,114 @@ export const HistorySidebar: React.FC<HistorySidebarProps> = ({
         )}
       </div>
       <div className="px-3 pt-3">
-        <button onClick={onNewChat} className="flex items-center gap-3 w-full text-left px-3 py-2 text-sm text-[var(--theme-text-secondary)] font-medium bg-[var(--theme-bg-primary)] border border-[var(--theme-border-secondary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-border-focus)] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--theme-border-focus)] shadow-sm transition-all" aria-label={t('headerNewChat_aria')}>
+        <button onClick={onNewChat} className="flex items-center gap-3 w-full text-left px-3 py-2 text-sm text-[var(--theme-text-secondary)] font-medium bg-[var(--theme-bg-primary)] border border-[var(--theme-border-secondary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-border-focus)] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--theme-border-focus)] shadow-sm transition-all mb-2" aria-label={t('headerNewChat_aria')}>
           <Edit3 size={18} />
           <span>{t('headerNewChat')}</span>
         </button>
 
-      <button 
-           onClick={onExportAllSessions}
-           className="flex items-center ..." 
-           aria-label={"导出所有聊天记录为文本文件"}
-      >         
-          <Download size={18} />
-        <span>{"导出全部记录"}</span>
-        </button>
+        <div className="flex gap-2">
+          <button 
+            onClick={onExportAllSessions}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-[var(--theme-text-secondary)] font-medium bg-[var(--theme-bg-primary)] border border-[var(--theme-border-secondary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-border-focus)] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--theme-border-focus)] shadow-sm transition-all flex-1" 
+            aria-label="导出所有聊天记录"
+          >         
+            <Download size={16} />
+            <span className="text-xs">导出</span>
+          </button>
+
+          <button 
+            onClick={onImportSessions}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-[var(--theme-text-secondary)] font-medium bg-[var(--theme-bg-primary)] border border-[var(--theme-border-secondary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-border-focus)] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--theme-border-focus)] shadow-sm transition-all flex-1" 
+            aria-label="导入聊天记录"
+          >         
+            <Upload size={16} />
+            <span className="text-xs">导入</span>
+          </button>
+        </div>
+
+        {/* 群组管理部分 */}
+        <div className="mt-4 border-t border-[var(--theme-border-primary)] pt-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-semibold text-[var(--theme-text-tertiary)] tracking-wider uppercase">聊天群组</h3>
+            <button
+              onClick={() => setIsAddingGroup(true)}
+              className="p-1.5 text-[var(--theme-text-secondary)] hover:text-[var(--theme-text-primary)] hover:bg-[var(--theme-bg-tertiary)] rounded-md transition-colors"
+              aria-label="添加新群组"
+            >
+              <Plus size={14} />
+            </button>
+          </div>
+
+          {/* 添加群组输入框 */}
+          {isAddingGroup && (
+            <div className="mb-3">
+              <input
+                type="text"
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                onKeyDown={handleCreateGroupKeyDown}
+                placeholder="输入群组名称"
+                className="w-full px-3 py-2 text-sm bg-[var(--theme-bg-primary)] border border-[var(--theme-border-secondary)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--theme-border-focus)] text-[var(--theme-text-primary)] placeholder:text-[var(--theme-text-tertiary)]"
+                autoFocus
+              />
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={handleCreateGroup}
+                  className="px-3 py-1.5 text-xs bg-[var(--theme-bg-accent)] text-white rounded-md hover:bg-[var(--theme-bg-accent-hover)] transition-colors"
+                >
+                  创建
+                </button>
+                <button
+                  onClick={() => {
+                    setIsAddingGroup(false);
+                    setNewGroupName('');
+                  }}
+                  className="px-3 py-1.5 text-xs text-[var(--theme-text-secondary)] border border-[var(--theme-border-secondary)] rounded-md hover:bg-[var(--theme-bg-tertiary)] transition-colors"
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 群组列表 */}
+          {savedGroups && savedGroups.length > 0 ? (
+            <div className="space-y-1">
+              {savedGroups.map((group) => {
+                // 计算每个群组中的会话数量
+                const groupSessionCount = sessions.filter(session => session.groupId === group.id).length;
+                
+                return (
+                  <div
+                    key={group.id}
+                    className="flex items-center justify-between p-2 rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors group"
+                  >
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <div className="w-3 h-3 rounded-full bg-[var(--theme-bg-accent)] flex-shrink-0"></div>
+                      <span className="text-sm text-[var(--theme-text-primary)] truncate" title={group.title}>
+                        {group.title}
+                      </span>
+                      <span className="text-xs text-[var(--theme-text-tertiary)] flex-shrink-0">
+                        ({groupSessionCount})
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => onDeleteGroup && onDeleteGroup(group.id)}
+                      className="p-1 text-[var(--theme-text-tertiary)] hover:text-[var(--theme-icon-error)] opacity-0 group-hover:opacity-100 transition-all rounded"
+                      aria-label="删除群组"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-xs text-[var(--theme-text-tertiary)] text-center py-2">
+              暂无群组
+            </p>
+          )}
+        </div>
 
       </div>
       <div className="px-4 pt-4 pb-2">
