@@ -39,6 +39,18 @@ interface ChatBehaviorSectionProps {
   setUseFilesApiForImages: (value: boolean) => void;
   expandCodeBlocksByDefault: boolean;
   setExpandCodeBlocksByDefault: (value: boolean) => void;
+  // 自动功能开关
+  isAutoTitleEnabled: boolean;
+  setIsAutoTitleEnabled: (value: boolean) => void;
+  isSuggestionsEnabled: boolean;
+  setIsSuggestionsEnabled: (value: boolean) => void;
+  // 图表渲染和通知功能
+  isMermaidRenderingEnabled: boolean;
+  setIsMermaidRenderingEnabled: (value: boolean) => void;
+  isGraphvizRenderingEnabled: boolean;
+  setIsGraphvizRenderingEnabled: (value: boolean) => void;
+  isCompletionNotificationEnabled: boolean;
+  setIsCompletionNotificationEnabled: (value: boolean) => void;
   t: (key: string) => string;
 }
 
@@ -49,8 +61,16 @@ export const ChatBehaviorSection: React.FC<ChatBehaviorSectionProps> = ({
   showThoughts, setShowThoughts, thinkingBudget, setThinkingBudget,
   isStreamingEnabled, setIsStreamingEnabled, 
   isTranscriptionThinkingEnabled, setIsTranscriptionThinkingEnabled, 
-  useFilesApiForImages, setUseFilesApiForImages,
-  expandCodeBlocksByDefault, setExpandCodeBlocksByDefault, t
+  useFilesApiForImages, setUseFilesApiForImages, 
+  expandCodeBlocksByDefault, setExpandCodeBlocksByDefault,
+  // 自动功能开关
+  isAutoTitleEnabled, setIsAutoTitleEnabled,
+  isSuggestionsEnabled, setIsSuggestionsEnabled,
+  // 图表渲染和通知功能
+  isMermaidRenderingEnabled, setIsMermaidRenderingEnabled,
+  isGraphvizRenderingEnabled, setIsGraphvizRenderingEnabled,
+  isCompletionNotificationEnabled, setIsCompletionNotificationEnabled,
+  t
 }) => {
   const isSystemPromptSet = systemInstruction && systemInstruction.trim() !== "";
   const inputBaseClasses = "w-full p-2 border rounded-md focus:ring-2 focus:border-[var(--theme-border-focus)] text-[var(--theme-text-primary)] placeholder-[var(--theme-text-tertiary)] text-sm";
@@ -308,6 +328,56 @@ export const ChatBehaviorSection: React.FC<ChatBehaviorSectionProps> = ({
                 <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transform transition-transform duration-200 ease-in-out peer-checked:translate-x-5"></div>
             </div>
         </label>
+
+        {/* 自动功能开关 */}
+        <div className="pt-3 border-t border-[var(--theme-border-secondary)] space-y-2">
+          <h4 className="text-sm font-medium text-[var(--theme-text-secondary)] mb-2">自动功能设置</h4>
+          
+          <label htmlFor="auto-title-toggle" className="flex items-center justify-between py-1 cursor-pointer">
+            <span className="text-sm font-medium text-[var(--theme-text-secondary)]">自动标题生成</span>
+            <div className="relative">
+              <input id="auto-title-toggle" type="checkbox" className="sr-only peer" checked={isAutoTitleEnabled} onChange={() => setIsAutoTitleEnabled(!isAutoTitleEnabled)} />
+              <div className="w-11 h-6 bg-[var(--theme-bg-input)] rounded-full peer peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-offset-2 peer-focus:ring-offset-[var(--theme-bg-secondary)] peer-focus:ring-[var(--theme-border-focus)] peer-checked:bg-[var(--theme-bg-accent)]"></div>
+              <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transform transition-transform duration-200 ease-in-out peer-checked:translate-x-5"></div>
+            </div>
+          </label>
+
+          <label htmlFor="suggestions-toggle" className="flex items-center justify-between py-1 cursor-pointer">
+            <span className="text-sm font-medium text-[var(--theme-text-secondary)]">自动建议生成</span>
+            <div className="relative">
+              <input id="suggestions-toggle" type="checkbox" className="sr-only peer" checked={isSuggestionsEnabled} onChange={() => setIsSuggestionsEnabled(!isSuggestionsEnabled)} />
+              <div className="w-11 h-6 bg-[var(--theme-bg-input)] rounded-full peer peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-offset-2 peer-focus:ring-offset-[var(--theme-bg-secondary)] peer-focus:ring-[var(--theme-border-focus)] peer-checked:bg-[var(--theme-bg-accent)]"></div>
+              <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transform transition-transform duration-200 ease-in-out peer-checked:translate-x-5"></div>
+            </div>
+          </label>
+
+          <label htmlFor="mermaid-rendering-toggle" className="flex items-center justify-between py-1 cursor-pointer">
+            <span className="text-sm font-medium text-[var(--theme-text-secondary)]">启用 Mermaid 图表渲染</span>
+            <div className="relative">
+              <input id="mermaid-rendering-toggle" type="checkbox" className="sr-only peer" checked={isMermaidRenderingEnabled} onChange={() => setIsMermaidRenderingEnabled(!isMermaidRenderingEnabled)} />
+              <div className="w-11 h-6 bg-[var(--theme-bg-input)] rounded-full peer peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-offset-2 peer-focus:ring-offset-[var(--theme-bg-secondary)] peer-focus:ring-[var(--theme-border-focus)] peer-checked:bg-[var(--theme-bg-accent)]"></div>
+              <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transform transition-transform duration-200 ease-in-out peer-checked:translate-x-5"></div>
+            </div>
+          </label>
+
+          <label htmlFor="graphviz-rendering-toggle" className="flex items-center justify-between py-1 cursor-pointer">
+            <span className="text-sm font-medium text-[var(--theme-text-secondary)]">启用 Graphviz 图表渲染</span>
+            <div className="relative">
+              <input id="graphviz-rendering-toggle" type="checkbox" className="sr-only peer" checked={isGraphvizRenderingEnabled} onChange={() => setIsGraphvizRenderingEnabled(!isGraphvizRenderingEnabled)} />
+              <div className="w-11 h-6 bg-[var(--theme-bg-input)] rounded-full peer peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-offset-2 peer-focus:ring-offset-[var(--theme-bg-secondary)] peer-focus:ring-[var(--theme-border-focus)] peer-checked:bg-[var(--theme-bg-accent)]"></div>
+              <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transform transition-transform duration-200 ease-in-out peer-checked:translate-x-5"></div>
+            </div>
+          </label>
+
+          <label htmlFor="completion-notification-toggle" className="flex items-center justify-between py-1 cursor-pointer">
+            <span className="text-sm font-medium text-[var(--theme-text-secondary)]">桌面通知</span>
+            <div className="relative">
+              <input id="completion-notification-toggle" type="checkbox" className="sr-only peer" checked={isCompletionNotificationEnabled} onChange={() => setIsCompletionNotificationEnabled(!isCompletionNotificationEnabled)} />
+              <div className="w-11 h-6 bg-[var(--theme-bg-input)] rounded-full peer peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-offset-2 peer-focus:ring-offset-[var(--theme-bg-secondary)] peer-focus:ring-[var(--theme-border-focus)] peer-checked:bg-[var(--theme-bg-accent)]"></div>
+              <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transform transition-transform duration-200 ease-in-out peer-checked:translate-x-5"></div>
+            </div>
+          </label>
+        </div>
       </div>
     </div>
   );

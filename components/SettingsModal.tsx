@@ -199,6 +199,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   setUseFilesApiForImages={(val) => updateSetting('useFilesApiForImages', val)}
                   expandCodeBlocksByDefault={settings.expandCodeBlocksByDefault}
                   setExpandCodeBlocksByDefault={(val) => updateSetting('expandCodeBlocksByDefault', val)}
+                  // 自动功能开关
+                  isAutoTitleEnabled={settings.isAutoTitleEnabled || false}
+                  setIsAutoTitleEnabled={(val) => updateSetting('isAutoTitleEnabled', val)}
+                  isSuggestionsEnabled={settings.isSuggestionsEnabled || false}
+                  setIsSuggestionsEnabled={(val) => updateSetting('isSuggestionsEnabled', val)}
+                  // 图表渲染和通知功能
+                  isMermaidRenderingEnabled={settings.isMermaidRenderingEnabled || false}
+                  setIsMermaidRenderingEnabled={(val) => updateSetting('isMermaidRenderingEnabled', val)}
+                  isGraphvizRenderingEnabled={settings.isGraphvizRenderingEnabled || false}
+                  setIsGraphvizRenderingEnabled={(val) => updateSetting('isGraphvizRenderingEnabled', val)}
+                  isCompletionNotificationEnabled={settings.isCompletionNotificationEnabled || false}
+                  setIsCompletionNotificationEnabled={(val) => updateSetting('isCompletionNotificationEnabled', val)}
                   t={t}
                 />
               )}
