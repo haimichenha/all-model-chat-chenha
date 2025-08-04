@@ -12,6 +12,7 @@ This contains everything you need to run your app locally.
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+   
 feat: 新增智能分段导入、代理支持并增强配置管理
 
 本次提交是对 Mozi (yeahhe365) v1.1.1 版本的重大功能增强，核心目标是解决大型文本上下文处理的痛点，并提升应用的易用性和配置灵活性。
