@@ -17,7 +17,7 @@ export const MessageList: React.FC<MessageListProps> = ({
     messages, messagesEndRef, scrollContainerRef, onScrollContainerScroll, 
     onEditMessage, onDeleteMessage, onRetryMessage, showThoughts, themeColors, baseFontSize,
     expandCodeBlocksByDefault, onSuggestionClick, onTextToSpeech, ttsMessageId, t, language, themeId,
-    showScrollToBottom, onScrollToBottom
+    showScrollToBottom, onScrollToBottom, onContextMenu, onTextSelection
 }) => {
   const [zoomedFile, setZoomedFile] = useState<UploadedFile | null>(null);
   
@@ -108,6 +108,8 @@ export const MessageList: React.FC<MessageListProps> = ({
               onTextToSpeech={onTextToSpeech}
               ttsMessageId={ttsMessageId}
               t={t}
+              onContextMenu={onContextMenu}
+              onTextSelection={onTextSelection}
             />
           ))}
         </div>

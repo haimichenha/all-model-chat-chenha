@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import html2canvas from 'html2canvas';
@@ -222,10 +222,12 @@ interface MessageProps {
     onTextToSpeech: (messageId: string, text: string) => void;
     ttsMessageId: string | null;
     t: (key: keyof typeof translations) => string;
+    onContextMenu?: (event: React.MouseEvent, messageId: string, messageElement: HTMLElement) => void;
+    onTextSelection?: (messageId: string) => void;
 }
 
 export const Message: React.FC<MessageProps> = React.memo((props) => {
-    const { message, prevMessage, messageIndex, onEditMessage, onDeleteMessage, onRetryMessage, onImageClick, onOpenHtmlPreview, showThoughts, themeColors, themeId, baseFontSize, expandCodeBlocksByDefault, t, onTextToSpeech, ttsMessageId } = props;
+    const { message, prevMessage, messageIndex, onEditMessage, onDeleteMessage, onRetryMessage, onImageClick, onOpenHtmlPreview, showThoughts, themeColors, themeId, baseFontSize, expandCodeBlocksByDefault, t, onTextToSpeech, ttsMessageId, onContextMenu, onTextSelection } = props;
     
     const isGrouped = prevMessage &&
         prevMessage.role === message.role &&
@@ -282,6 +284,20 @@ export const Message: React.FC<MessageProps> = React.memo((props) => {
         </div>
     );
 
+    const handleContextMenu = useCallback((event: React.MouseEvent) => {
+        // Only allow context menu on model messages (not user messages)
+        if (message.role === 'model' && onContextMenu) {
+            onContextMenu(event, message.id, event.currentTarget as HTMLElement);
+        }
+    }, [message.id, message.role, onContextMenu]);
+
+    const handleMouseUp = useCallback(() => {
+        if (message.role === 'model' && onTextSelection) {
+            // Small delay to ensure selection is complete
+            setTimeout(() => onTextSelection(message.id), 50);
+        }
+    }, [message.id, message.role, onTextSelection]);
+
     return (
         <div 
             className={`${messageContainerClasses} message-container-animate`} 
@@ -289,7 +305,12 @@ export const Message: React.FC<MessageProps> = React.memo((props) => {
             style={{ animationDelay: `${Math.min(messageIndex * 80, 800)}ms` }}
         >
             {message.role !== 'user' && iconAndActions}
-            <div className={`${bubbleClasses} ${roleSpecificBubbleClasses[message.role]}`}>
+            <div 
+                className={`${bubbleClasses} ${roleSpecificBubbleClasses[message.role]}`}
+                onContextMenu={handleContextMenu}
+                onMouseUp={handleMouseUp}
+                style={{ userSelect: message.role === 'model' ? 'text' : 'auto' }}
+            >
                 <MessageContent
                     message={message}
                     onImageClick={onImageClick}

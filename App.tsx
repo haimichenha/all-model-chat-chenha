@@ -15,8 +15,12 @@ import { SettingsModal } from './components/SettingsModal';
 import { LogViewer } from './components/LogViewer';
 import { PreloadedMessagesModal } from './components/PreloadedMessagesModal';
 import { StorageFullModal } from './components/StorageFullModal';
+import { ContextMenu, PiPContextWindow } from './components/PiPContextMenu';
+import { APITestingModal } from './components/APITestingModal';
 import { geminiServiceInstance } from './services/geminiService';
 import { firebaseStorageService } from './services/firebaseStorageService';
+import { usePiPContext } from './hooks/usePiPContext';
+import { persistentStoreService } from './services/persistentStore';
 
 const App: React.FC = () => {
   const { appSettings, setAppSettings, currentTheme, language } = useAppSettings();
@@ -114,6 +118,19 @@ const App: React.FC = () => {
   const [isStorageFullModalOpen, setIsStorageFullModalOpen] = useState<boolean>(false);
   const [storageQuota, setStorageQuota] = useState(() => firebaseStorageService.getStorageQuota());
   const [exportStatus, setExportStatus] = useState<'idle' | 'exporting'>('idle');
+  const [isAPITestingModalOpen, setIsAPITestingModalOpen] = useState<boolean>(false);
+  const [apiConfigs, setApiConfigs] = useState(() => persistentStoreService.getApiConfigs());
+
+  // PiP Context functionality
+  const pipContext = usePiPContext(
+    (text: string) => handleSendMessage({ text }), // onSendMessage
+    (messageId: string, newContent: string) => {
+      // onUpdateMessage - update a specific message with new content
+      // This would integrate with your message update system
+      logService.info(`Updating message ${messageId} with new content`);
+      // In a full implementation, you'd update the message in the chat history
+    }
+  );
   
   const handleSaveSettings = (newSettings: AppSettings) => {
     // Save the new settings as the global default for subsequent new chats
@@ -343,9 +360,12 @@ const App: React.FC = () => {
         } else if ((event.ctrlKey || event.metaKey) && event.altKey && event.key.toLowerCase() === 'l') {
             event.preventDefault();
             setIsLogViewerOpen(prev => !prev);
+        } else if ((event.ctrlKey || event.metaKey) && event.altKey && event.key.toLowerCase() === 'a') {
+            event.preventDefault();
+            setIsAPITestingModalOpen(prev => !prev);
         }
         else if (event.key === 'Delete') {
-            if (isSettingsModalOpen || isPreloadedMessagesModalOpen) return;
+            if (isSettingsModalOpen || isPreloadedMessagesModalOpen || isAPITestingModalOpen) return;
             const chatTextareaAriaLabel = 'Chat message input';
             const isChatTextareaFocused = activeElement?.getAttribute('aria-label') === chatTextareaAriaLabel;
             
@@ -374,7 +394,7 @@ const App: React.FC = () => {
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [startNewChat, handleClearCurrentChat, isSettingsModalOpen, isPreloadedMessagesModalOpen, currentChatSettings.modelId, handleSelectModelInHeader]);
+  }, [startNewChat, handleClearCurrentChat, isSettingsModalOpen, isPreloadedMessagesModalOpen, isAPITestingModalOpen, currentChatSettings.modelId, handleSelectModelInHeader]);
 
   const getCurrentModelDisplayName = () => {
     const modelIdToDisplay = currentChatSettings.modelId || appSettings.modelId;
@@ -510,6 +530,41 @@ const App: React.FC = () => {
               t={t}
             />
           )}
+          {/* Context Menu for PiP functionality */}
+          <ContextMenu
+            isVisible={pipContext.isContextMenuVisible}
+            position={pipContext.contextMenuPosition}
+            selectedText={pipContext.selectedText}
+            onClose={pipContext.closeContextMenu}
+            onExplain={pipContext.handleExplain}
+            onRegenerate={pipContext.handleRegenerate}
+          />
+          {/* Picture-in-Picture Context Window */}
+          <PiPContextWindow
+            isOpen={pipContext.isPiPWindowOpen}
+            title={pipContext.pipWindowTitle}
+            content={pipContext.pipWindowContent}
+            isLoading={pipContext.isPipLoading}
+            onAdd={pipContext.handleAddPiPContent}
+            onCancel={pipContext.handleCancelPiP}
+          />
+          {/* API Testing Modal */}
+          {isAPITestingModalOpen && (
+            <APITestingModal
+              isOpen={isAPITestingModalOpen}
+              onClose={() => setIsAPITestingModalOpen(false)}
+              apiConfigs={apiConfigs}
+              currentApiConfigId={appSettings.apiKey} // This might need adjustment based on your API config structure
+              onSelectConfig={(configId) => {
+                // Handle API config selection
+                const selectedConfig = apiConfigs.find(c => c.id === configId);
+                if (selectedConfig) {
+                  setAppSettings(prev => ({ ...prev, apiKey: selectedConfig.apiKey }));
+                }
+              }}
+              t={t}
+            />
+          )}
         </>
         <MessageList
           messages={messages}
@@ -531,6 +586,8 @@ const App: React.FC = () => {
           language={language}
           showScrollToBottom={showScrollToBottom}
           onScrollToBottom={scrollToBottom}
+          onContextMenu={pipContext.handleContextMenu}
+          onTextSelection={pipContext.handleTextSelection}
         />
         <ChatInput
           appSettings={appSettings}

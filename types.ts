@@ -240,6 +240,8 @@ export interface MessageListProps {
   onScrollToNextTurn?: () => void;
   showScrollToBottom?: boolean;
   onScrollToBottom?: () => void;
+  onContextMenu?: (event: React.MouseEvent, messageId: string, messageElement: HTMLElement) => void;
+  onTextSelection?: (messageId: string) => void;
 }
 
 export interface PreloadedMessage {
