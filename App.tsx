@@ -178,6 +178,39 @@ const App: React.FC = () => {
   const handlePipClose = useCallback(() => {
     setPipDialog({ isVisible: false, originalText: '', requestType: 'explain' });
   }, []);
+
+  const handlePipFollowUp = useCallback(async (message: string) => {
+    try {
+      // Send the follow-up message using the same configuration as the PiP request
+      const response = await geminiServiceInstance.sendMessage(
+        message,
+        [],
+        currentChatSettings.modelId || appSettings.modelId,
+        currentChatSettings.systemInstruction,
+        { temperature: currentChatSettings.temperature, topP: currentChatSettings.topP },
+        currentChatSettings.showThoughts,
+        currentChatSettings.thinkingBudget || 2048,
+        currentChatSettings.lockedApiKey,
+        currentChatSettings.isGoogleSearchEnabled,
+        currentChatSettings.isCodeExecutionEnabled,
+        currentChatSettings.isUrlContextEnabled
+      );
+      
+      // Update the PipDialog with the new response
+      setPipDialog(prev => ({
+        ...prev,
+        response: response.content || '抱歉，无法生成回答。',
+        isLoading: false
+      }));
+    } catch (error) {
+      logService.error('Failed to generate PiP follow-up response:', error);
+      setPipDialog(prev => ({
+        ...prev,
+        response: prev.response + '\n\n---\n\n生成回答时出错，请重试。',
+        isLoading: false
+      }));
+    }
+  }, [currentChatSettings, appSettings]);
   
   const handleSaveSettings = (newSettings: AppSettings) => {
     // Save the new settings as the global default for subsequent new chats
@@ -540,6 +573,7 @@ const App: React.FC = () => {
         onConfirm={handlePipConfirm}
         onCancel={handlePipCancel}
         onClose={handlePipClose}
+        onSendFollowUp={handlePipFollowUp}
       />
 
       {/* Picture-in-Picture Window Content */}
