@@ -1,5 +1,6 @@
 import { PersistentStore, ApiConfig } from '../types';
 import { logService } from './logService';
+import { firebaseStorageService } from './firebaseStorageService';
 
 const PERSISTENT_STORE_KEY = 'all-model-chat-persistent-store';
 
@@ -19,19 +20,23 @@ class PersistentStoreService {
   private store: PersistentStore;
 
   constructor() {
-    this.store = this.loadStore();
+    this.initialize();
   }
 
-  private loadStore(): PersistentStore {
+  private async initialize() {
+    this.store = await this.loadStore();
+  }
+
+  private async loadStore(): Promise<PersistentStore> {
     try {
-      const stored = localStorage.getItem(PERSISTENT_STORE_KEY);
+      // Try loading from hybrid storage (localStorage + Firebase fallback)
+      const stored = await firebaseStorageService.loadData(PERSISTENT_STORE_KEY);
       if (stored) {
-        const parsed = JSON.parse(stored);
         // 合并默认数据，确保向后兼容
         return {
           ...DEFAULT_PERSISTENT_STORE,
-          ...parsed,
-          systemPrompts: parsed.systemPrompts || DEFAULT_PERSISTENT_STORE.systemPrompts
+          ...stored,
+          systemPrompts: stored.systemPrompts || DEFAULT_PERSISTENT_STORE.systemPrompts
         };
       }
     } catch (error) {
@@ -41,10 +46,19 @@ class PersistentStoreService {
     return { ...DEFAULT_PERSISTENT_STORE };
   }
 
-  private saveStore(): void {
+  private async saveStore(): Promise<void> {
     try {
-      localStorage.setItem(PERSISTENT_STORE_KEY, JSON.stringify(this.store));
-      logService.info('Persistent store saved successfully');
+      const result = await firebaseStorageService.saveData(PERSISTENT_STORE_KEY, this.store);
+      if (result.success) {
+        logService.info(`Persistent store saved successfully${result.usedFirebase ? ' (using Firebase)' : ' (using localStorage)'}`);
+        
+        // If storage is getting full, we might want to notify the user
+        if (result.usedFirebase) {
+          logService.warn('localStorage full, data saved to Firebase instead');
+        }
+      } else {
+        logService.error('Failed to save persistent store:', result.error);
+      }
     } catch (error) {
       logService.error('Failed to save persistent store:', error);
     }
@@ -62,7 +76,7 @@ class PersistentStoreService {
     };
     
     this.store.apiConfigs.push(newConfig);
-    this.saveStore();
+    this.saveStore(); // Note: This is fire-and-forget for backward compatibility
     logService.info(`Added API config: ${newConfig.name}`);
     return newConfig;
   }

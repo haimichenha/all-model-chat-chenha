@@ -14,7 +14,9 @@ import { logService } from './services/logService';
 import { SettingsModal } from './components/SettingsModal';
 import { LogViewer } from './components/LogViewer';
 import { PreloadedMessagesModal } from './components/PreloadedMessagesModal';
+import { StorageFullModal } from './components/StorageFullModal';
 import { geminiServiceInstance } from './services/geminiService';
+import { firebaseStorageService } from './services/firebaseStorageService';
 
 const App: React.FC = () => {
   const { appSettings, setAppSettings, currentTheme, language } = useAppSettings();
@@ -91,7 +93,11 @@ const App: React.FC = () => {
       toggleUrlContext,
 
       handleExportAllSessions,
-  } = useChat(appSettings, isServiceInitialized);
+  } = useChat(appSettings, isServiceInitialized, () => {
+    const newQuota = firebaseStorageService.getStorageQuota();
+    setStorageQuota(newQuota);
+    setIsStorageFullModalOpen(true);
+  });
 
   // [修改] 2. 在注入设置成功后，将信号灯变为绿色
   useEffect(() => {
@@ -105,6 +111,9 @@ const App: React.FC = () => {
   const [isPreloadedMessagesModalOpen, setIsPreloadedMessagesModalOpen] = useState<boolean>(false);
   const [isHistorySidebarOpen, setIsHistorySidebarOpen] = useState<boolean>(window.innerWidth >= 768);
   const [isLogViewerOpen, setIsLogViewerOpen] = useState<boolean>(false);
+  const [isStorageFullModalOpen, setIsStorageFullModalOpen] = useState<boolean>(false);
+  const [storageQuota, setStorageQuota] = useState(() => firebaseStorageService.getStorageQuota());
+  const [exportStatus, setExportStatus] = useState<'idle' | 'exporting'>('idle');
   
   const handleSaveSettings = (newSettings: AppSettings) => {
     // Save the new settings as the global default for subsequent new chats
@@ -132,9 +141,118 @@ const App: React.FC = () => {
 
   useEffect(() => {
     logService.info('App initialized.');
+    
+    // Monitor storage usage periodically
+    const checkStorageQuota = () => {
+      const newQuota = firebaseStorageService.getStorageQuota();
+      setStorageQuota(newQuota);
+      
+      // Show storage full modal if storage is getting full
+      if (newQuota.isNearLimit || newQuota.isOverLimit) {
+        setIsStorageFullModalOpen(true);
+      }
+    };
+
+    // Check immediately and then every 30 seconds
+    checkStorageQuota();
+    const storageCheckInterval = setInterval(checkStorageQuota, 30000);
+
+    return () => clearInterval(storageCheckInterval);
   }, []);
 
-  // File import functionality
+  // Storage and export functionality
+  const handleExportChatFromStorageModal = useCallback(async (format: 'png' | 'html' | 'txt') => {
+    if (!activeChat) return;
+    
+    setExportStatus('exporting');
+    try {
+      // Use the existing export functionality from ExportChatModal
+      // We'll create a simple export function here
+      await exportChatSession(activeChat, format);
+      logService.info(`Successfully exported chat in ${format} format`);
+    } catch (error) {
+      logService.error('Failed to export chat:', error);
+    } finally {
+      setExportStatus('idle');
+    }
+  }, [activeChat]);
+
+  const handleMigrateToFirebase = useCallback(async () => {
+    try {
+      const result = await firebaseStorageService.migrateToFirebase();
+      if (result.success) {
+        logService.info(`Successfully migrated ${result.migratedKeys.length} items to Firebase`);
+        // Update storage quota after migration
+        const newQuota = firebaseStorageService.getStorageQuota();
+        setStorageQuota(newQuota);
+        
+        // Close the modal if storage is no longer full
+        if (!newQuota.isNearLimit && !newQuota.isOverLimit) {
+          setIsStorageFullModalOpen(false);
+        }
+      } else {
+        logService.error('Migration failed:', result.errors);
+      }
+    } catch (error) {
+      logService.error('Migration error:', error);
+    }
+  }, []);
+
+  // Simple export function (simplified version)
+  const exportChatSession = async (session: any, format: 'png' | 'html' | 'txt') => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `chat-${session.title || 'untitled'}-${timestamp}`;
+    
+    if (format === 'txt') {
+      const content = session.messages.map((msg: any) => 
+        `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
+      ).join('\n\n');
+      
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${filename}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } else if (format === 'html') {
+      const content = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Chat Export - ${session.title || 'Untitled'}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .message { margin-bottom: 20px; padding: 10px; border-radius: 5px; }
+    .user { background-color: #e3f2fd; }
+    .assistant { background-color: #f5f5f5; }
+    .role { font-weight: bold; margin-bottom: 5px; }
+  </style>
+</head>
+<body>
+  <h1>Chat Export: ${session.title || 'Untitled'}</h1>
+  <p>Exported on: ${new Date().toLocaleString()}</p>
+  ${session.messages.map((msg: any) => `
+    <div class="message ${msg.role}">
+      <div class="role">${msg.role === 'user' ? 'User' : 'Assistant'}</div>
+      <div>${msg.content.replace(/\n/g, '<br>')}</div>
+    </div>
+  `).join('')}
+</body>
+</html>`;
+      
+      const blob = new Blob([content], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${filename}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  };
   const handleImportChatHistory = useCallback(() => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -378,6 +496,17 @@ const App: React.FC = () => {
               onLoadScenario={handleLoadPreloadedScenario}
               onImportScenario={handleImportPreloadedScenario}
               onExportScenario={handleExportPreloadedScenario}
+              t={t}
+            />
+          )}
+          {isStorageFullModalOpen && (
+            <StorageFullModal
+              isOpen={isStorageFullModalOpen}
+              onClose={() => setIsStorageFullModalOpen(false)}
+              onExportChat={handleExportChatFromStorageModal}
+              onMigrateToFirebase={handleMigrateToFirebase}
+              exportStatus={exportStatus}
+              storageQuota={storageQuota}
               t={t}
             />
           )}

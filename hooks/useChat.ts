@@ -9,8 +9,9 @@ import { useMessageHandler } from './useMessageHandler';
 import { useChatGroups } from './useChatGroups';
 import { applyImageCachePolicy, generateUniqueId, logService } from '../utils/appUtils';
 import { CHAT_HISTORY_SESSIONS_KEY } from '../constants/appConstants';
+import { firebaseStorageService } from '../services/firebaseStorageService';
 
-export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean = false) => {
+export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean = false, onStorageFull?: () => void) => {
     // 1. Core application state, now managed centrally in the main hook
     const [savedSessions, setSavedSessions] = useState<SavedChatSession[]>([]);
     const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -40,65 +41,33 @@ export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean 
         setSavedSessions(prevSessions => {
             let newSessions = updater(prevSessions);
 
-            const attemptToSave = (sessionsToSave: SavedChatSession[]): boolean => {
+            // Save in the background (fire and forget for better UX)
+            const saveInBackground = async () => {
                 try {
-                    // 我们先应用图片缓存策略，这本身就能节省一些空间
-                    const sessionsForStorage = applyImageCachePolicy(sessionsToSave);
-                    localStorage.setItem(CHAT_HISTORY_SESSIONS_KEY, JSON.stringify(sessionsForStorage));
-                    logService.info(`Successfully saved ${sessionsToSave.length} sessions to localStorage.`);
-                    return true;
-                } catch (error: any) {
-                    // 捕获"超出配额"的错误
-                    if (error.name === 'QuotaExceededError' || (error.message && error.message.toLowerCase().includes('quota'))) {
-                        logService.warn('LocalStorage quota exceeded. Attempting to prune sessions.');
-                        return false;
+                    const sessionsForStorage = applyImageCachePolicy(newSessions);
+                    const result = await firebaseStorageService.saveData(CHAT_HISTORY_SESSIONS_KEY, sessionsForStorage);
+                    
+                    if (result.success) {
+                        logService.info(`Successfully saved ${newSessions.length} sessions${result.usedFirebase ? ' (using Firebase)' : ' (using localStorage)'}`);
+                    } else {
+                        logService.error('Failed to save sessions:', result.error);
+                        // Trigger storage full modal if needed
+                        if (onStorageFull) {
+                            onStorageFull();
+                        }
                     }
-                    // 对于其他未知错误，我们只记录日志，不进行清理
-                    logService.error('Failed to save sessions to localStorage due to an unexpected error:', error);
-                    return true; 
+                } catch (error) {
+                    logService.error('Failed to save sessions to storage:', error);
+                    if (onStorageFull) {
+                        onStorageFull();
+                    }
                 }
             };
 
-            // 第一次尝试保存
-            if (attemptToSave(newSessions)) {
-                return newSessions; // 保存成功，直接更新状态并返回
-            }
-
-            // --- 如果保存失败，启动自动清理逻辑 ---
-            alert('浏览器存储空间已满。为保存最新记录，将自动清理最旧的、未固定的聊天会话。');
-            
-            let prunedSessions = [...newSessions];
-            let prunedCount = 0;
-
-            // 循环清理，直到保存成功
-            while (!attemptToSave(prunedSessions)) {
-                // 按时间戳升序排序，最旧的在最前面
-                const sorted = prunedSessions.sort((a, b) => a.timestamp - b.timestamp);
-                
-                // 找到第一个可以被删除的会话（即没有被固定的）
-                const indexToRemove = sorted.findIndex(s => !s.isPinned);
-
-                if (indexToRemove === -1) {
-                    // 如果所有会话都已被固定，但空间仍然不足
-                    logService.error('Pruning failed: No more non-pinned sessions to remove, but quota is still exceeded.');
-                    alert('自动清理失败：所有会话均已固定，无法腾出足够空间。请手动导出并清理聊天记录以防数据丢失。');
-                    // 即使无法保存，也要在内存中返回最新的状态，避免丢失当前操作
-                    return newSessions;
-                }
-                
-                const sessionToRemove = sorted[indexToRemove];
-                prunedSessions = prunedSessions.filter(s => s.id !== sessionToRemove.id);
-                prunedCount++;
-                logService.info(`Pruning session: "${sessionToRemove.title}" (ID: ${sessionToRemove.id})`);
-            }
-            
-            if (prunedCount > 0) {
-                logService.info(`Successfully pruned ${prunedCount} session(s) and saved the history.`);
-            }
-            
-            return prunedSessions; // 返回清理后的会话列表
+            saveInBackground();
+            return newSessions;
         });
-    }, []);
+    }, [onStorageFull]);
 
     // 2. Derive active session state from the core state
     const activeChat = useMemo(() => {
