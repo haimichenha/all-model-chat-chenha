@@ -21,7 +21,14 @@ class GeminiServiceImpl implements GeminiService {
 
     // _getClient 现在恢复到最简单的状态，不再处理代理
     private _getClient(apiKey: string): GoogleGenAI {
-        return new GoogleGenAI({ apiKey });
+        // For newapi-style sk- keys, use a dummy key for client initialization
+        // since the proxy will handle the actual authentication
+        const clientApiKey = this._isNewApiKey(apiKey) ? 'AIzaSyDummy_Key_For_NewAPI_Proxy_Usage_Only_12345' : apiKey;
+        return new GoogleGenAI({ apiKey: clientApiKey });
+    }
+
+    private _isNewApiKey(apiKey: string): boolean {
+        return apiKey.startsWith('sk-') && apiKey.length > 20;
     }
 
     private _getApiClientOrThrow(apiKey?: string | null): GoogleGenAI {
@@ -38,7 +45,7 @@ class GeminiServiceImpl implements GeminiService {
      * 它会在执行API调用前，按需、临时地替换全局fetch函数.
      * @param apiCall 需要被包装的API调用函数
      */
-    private async _withProxyFetch<T>(apiCall: () => Promise<T>): Promise<T> {
+    private async _withProxyFetch<T>(apiCall: () => Promise<T>, actualApiKey?: string): Promise<T> {
         if (!this.currentAppSettings) {
             throw new Error("Service settings have not been initialized.");
         }
@@ -72,6 +79,22 @@ class GeminiServiceImpl implements GeminiService {
                 url.port = proxy.port;
                 url.protocol = proxy.protocol;
                 url.pathname = newPath;
+                
+                // For newapi-style endpoints, we need to include the actual API key in the authorization header
+                if (actualApiKey && this._isNewApiKey(actualApiKey)) {
+                    const headers = new Headers(init?.headers);
+                    headers.set('Authorization', `Bearer ${actualApiKey}`);
+                    
+                    // Remove the API key from the URL query parameters if it exists
+                    url.searchParams.delete('key');
+                    
+                    init = {
+                        ...init,
+                        headers
+                    };
+                    
+                    logService.info(`[PROXY WRAPPER] Added Bearer token for newapi key`);
+                }
                 
                 logService.info(`[PROXY WRAPPER] Redirecting fetch to ${url.toString()}`);
                 return originalFetch(url.toString(), init);
@@ -113,10 +136,11 @@ class GeminiServiceImpl implements GeminiService {
     // --- 所有公开方法现在都使用 _withProxyFetch 包装 ---
     
     async getAvailableModels(apiKeysString: string | null): Promise<ModelOption[]> {
+        const keys = (apiKeysString || '').split('\n').map(k => k.trim()).filter(Boolean);
+        if (keys.length === 0) throw new Error("API key not configured.");
+        const randomKey = keys[Math.floor(Math.random() * keys.length)];
+        
         return this._withProxyFetch(async () => {
-            const keys = (apiKeysString || '').split('\n').map(k => k.trim()).filter(Boolean);
-            if (keys.length === 0) throw new Error("API key not configured.");
-            const randomKey = keys[Math.floor(Math.random() * keys.length)];
             const ai = this._getClient(randomKey);
             
             const modelPager = await ai.models.list();
@@ -131,7 +155,7 @@ class GeminiServiceImpl implements GeminiService {
                 }
             }
             return availableModels.sort((a, b) => a.name.localeCompare(b.name));
-        });
+        }, randomKey);
     }
 
     async uploadFile(apiKey: string, file: File, mimeType: string, displayName: string, signal: AbortSignal): Promise<GeminiFile> {
@@ -152,7 +176,7 @@ class GeminiServiceImpl implements GeminiService {
                 }
             }
             return uploadedFile;
-        });
+        }, apiKey);
     }
     
     async getFileMetadata(apiKey: string, fileApiName: string): Promise<GeminiFile | null> {
@@ -166,7 +190,7 @@ class GeminiServiceImpl implements GeminiService {
                 }
                 throw error;
             }
-        });
+        }, apiKey);
     }
 
     async generateImages(apiKey: string, modelId: string, prompt: string, aspectRatio: string, abortSignal: AbortSignal): Promise<string[]> {
@@ -175,7 +199,7 @@ class GeminiServiceImpl implements GeminiService {
             // @ts-ignore
             const response = await ai.models.generateImages({ model: modelId, prompt, config: { aspectRatio, numberOfImages: 1, outputMimeType: 'image/jpeg' } });
             return response.generatedImages?.map((img: any) => img?.image?.imageBytes).filter(Boolean) ?? [];
-        });
+        }, apiKey);
     }
 
     async generateSpeech(apiKey: string, modelId: string, text: string, voice: string, abortSignal: AbortSignal): Promise<string> {
@@ -193,7 +217,7 @@ class GeminiServiceImpl implements GeminiService {
             const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
             if (typeof audioData === 'string') return audioData;
             throw new Error('No audio data received');
-        });
+        }, apiKey);
     }
 
     async transcribeAudio(apiKey: string, audioFile: File, modelId: string, isThinkingEnabled: boolean): Promise<string> {
@@ -205,7 +229,7 @@ class GeminiServiceImpl implements GeminiService {
             const response = await ai.models.generateContent({ model: modelId, contents: { parts: [textPart, audioPart] } });
             if (response.text) return response.text;
             throw new Error("Transcription failed.");
-        });
+        }, apiKey);
     }
 
     async generateTitle(apiKey: string, userContent: string, modelContent: string, language: string): Promise<string> {
@@ -235,7 +259,7 @@ class GeminiServiceImpl implements GeminiService {
             } else {
                 throw new Error("Title generation failed. The model returned an empty response.");
             }
-        });
+        }, apiKey);
     }
 
     async generateSuggestions(apiKey: string, userContent: string, modelContent: string, language: string): Promise<string[]> {
@@ -264,7 +288,7 @@ class GeminiServiceImpl implements GeminiService {
             } else {
                 throw new Error("Suggestions generation returned an empty response.");
             }
-        });
+        }, apiKey);
     }
 
     async sendMessageStream(
@@ -288,7 +312,7 @@ class GeminiServiceImpl implements GeminiService {
             } catch (error) {
                 onError(error as Error);
             }
-        });
+        }, apiKey);
     }
     
     async sendMessageNonStream(
@@ -322,7 +346,7 @@ class GeminiServiceImpl implements GeminiService {
             } catch (error) {
                 onError(error as Error);
             }
-        });
+        }, apiKey);
     }
 
     async processTextInChunks(

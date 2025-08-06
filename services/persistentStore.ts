@@ -1,5 +1,6 @@
 import { PersistentStore, ApiConfig } from '../types';
 import { logService } from './logService';
+import { firebaseStorageService } from './firebaseStorageService';
 
 const PERSISTENT_STORE_KEY = 'all-model-chat-persistent-store';
 
@@ -28,26 +29,154 @@ class PersistentStoreService {
       if (stored) {
         const parsed = JSON.parse(stored);
         // 合并默认数据，确保向后兼容
-        return {
+        const store = {
           ...DEFAULT_PERSISTENT_STORE,
           ...parsed,
           systemPrompts: parsed.systemPrompts || DEFAULT_PERSISTENT_STORE.systemPrompts
         };
+        
+        // [新增] 异步检查 Firebase 备份是否更新
+        this.checkFirebaseBackupAsync();
+        
+        return store;
       }
     } catch (error) {
       logService.error('Failed to load persistent store:', error);
     }
     
+    // [新增] 如果 localStorage 为空，尝试从 Firebase 恢复
+    this.tryRestoreFromFirebase();
+    
     return { ...DEFAULT_PERSISTENT_STORE };
+  }
+
+  private async checkFirebaseBackupAsync(): Promise<void> {
+    try {
+      const timestamp = await firebaseStorageService.getFirebaseBackupTimestamp();
+      if (timestamp) {
+        const localTimestamp = localStorage.getItem(PERSISTENT_STORE_KEY + '_timestamp');
+        const localTime = localTimestamp ? parseInt(localTimestamp) : 0;
+        
+        if (timestamp > localTime) {
+          logService.info('Firebase backup is newer than local data');
+          // 可以在这里提示用户是否要恢复较新的云端数据
+        }
+      }
+    } catch (error) {
+      logService.warn('Failed to check Firebase backup timestamp:', error);
+    }
+  }
+
+  private async tryRestoreFromFirebase(): Promise<void> {
+    try {
+      const restored = await firebaseStorageService.restoreFromFirebase();
+      if (restored && restored.persistentStore) {
+        this.store = restored.persistentStore;
+        this.saveStore(); // 保存到本地
+        logService.info('Successfully restored persistent store from Firebase');
+      }
+    } catch (error) {
+      logService.error('Failed to restore from Firebase:', error);
+    }
   }
 
   private saveStore(): void {
     try {
       localStorage.setItem(PERSISTENT_STORE_KEY, JSON.stringify(this.store));
       logService.info('Persistent store saved successfully');
+      
+      // [新增] 异步备份到 Firebase (不阻塞主要流程)
+      this.backupToFirebaseAsync();
     } catch (error) {
       logService.error('Failed to save persistent store:', error);
+      
+      // [新增] 如果 localStorage 失败，尝试提示用户并检查是否能备份到 Firebase
+      this.handleStorageFullError();
     }
+  }
+
+  private async backupToFirebaseAsync(): Promise<void> {
+    try {
+      await firebaseStorageService.backupToFirebase([], this.store);
+    } catch (error) {
+      logService.warn('Firebase backup failed (non-critical):', error);
+    }
+  }
+
+  private async handleStorageFullError(): Promise<void> {
+    // 检查是否是存储空间不足的错误
+    try {
+      // 尝试检测可用的存储空间
+      const testKey = '_storage_test_';
+      localStorage.setItem(testKey, 'test');
+      localStorage.removeItem(testKey);
+    } catch (testError) {
+      // localStorage 确实不可用，显示存储已满对话框
+      this.showStorageFullDialog();
+    }
+  }
+
+  private showStorageFullDialog(): void {
+    // 创建存储已满对话框，包含导出功能
+    const dialog = document.createElement('div');
+    dialog.id = 'storage-full-dialog';
+    dialog.innerHTML = `
+      <div style="
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0; 
+        background: rgba(0,0,0,0.5); z-index: 10000; 
+        display: flex; align-items: center; justify-content: center;
+      ">
+        <div style="
+          background: white; padding: 24px; border-radius: 8px; 
+          max-width: 500px; margin: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        ">
+          <h2 style="color: #333; margin: 0 0 16px 0; font-size: 18px;">存储空间已满</h2>
+          <p style="color: #666; margin: 0 0 20px 0; line-height: 1.5;">
+            浏览器存储空间不足。建议导出聊天记录后清理部分数据，或开启 Firebase 云端备份。
+          </p>
+          <div style="display: flex; gap: 12px; justify-content: flex-end;">
+            <button id="export-data-btn" style="
+              background: #2563eb; color: white; border: none; 
+              padding: 8px 16px; border-radius: 4px; cursor: pointer;
+            ">导出数据</button>
+            <button id="enable-firebase-btn" style="
+              background: #059669; color: white; border: none; 
+              padding: 8px 16px; border-radius: 4px; cursor: pointer;
+            ">开启云备份</button>
+            <button id="close-dialog-btn" style="
+              background: #6b7280; color: white; border: none; 
+              padding: 8px 16px; border-radius: 4px; cursor: pointer;
+            ">确定</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // 添加事件监听器
+    dialog.querySelector('#export-data-btn')?.addEventListener('click', () => {
+      this.exportToJSON();
+      dialog.remove();
+    });
+
+    dialog.querySelector('#enable-firebase-btn')?.addEventListener('click', async () => {
+      try {
+        if (await firebaseStorageService.isFirebaseAvailable()) {
+          await firebaseStorageService.backupToFirebase([], this.store);
+          alert('云端备份已启用！数据已备份到 Firebase。');
+        } else {
+          alert('Firebase 服务暂不可用，请稍后重试。');
+        }
+      } catch (error) {
+        alert('启用云备份失败，请检查网络连接。');
+      }
+      dialog.remove();
+    });
+
+    dialog.querySelector('#close-dialog-btn')?.addEventListener('click', () => {
+      dialog.remove();
+    });
+
+    document.body.appendChild(dialog);
   }
 
   // API配置管理
@@ -171,6 +300,58 @@ class PersistentStoreService {
     this.store = { ...DEFAULT_PERSISTENT_STORE };
     this.saveStore();
     logService.info('Cleared all persistent store data');
+  }
+
+  // [新增] Firebase 备份管理方法
+  async createFirebaseBackup(): Promise<boolean> {
+    try {
+      return await firebaseStorageService.backupToFirebase([], this.store);
+    } catch (error) {
+      logService.error('Failed to create Firebase backup:', error);
+      return false;
+    }
+  }
+
+  async restoreFromFirebaseBackup(): Promise<boolean> {
+    try {
+      const restored = await firebaseStorageService.restoreFromFirebase();
+      if (restored && restored.persistentStore) {
+        this.store = restored.persistentStore;
+        this.saveStore();
+        logService.info('Successfully restored from Firebase backup');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      logService.error('Failed to restore from Firebase backup:', error);
+      return false;
+    }
+  }
+
+  async hasFirebaseBackup(): Promise<boolean> {
+    try {
+      return await firebaseStorageService.hasFirebaseBackup();
+    } catch (error) {
+      logService.error('Failed to check Firebase backup:', error);
+      return false;
+    }
+  }
+
+  async clearFirebaseBackup(): Promise<boolean> {
+    try {
+      return await firebaseStorageService.clearFirebaseStorage();
+    } catch (error) {
+      logService.error('Failed to clear Firebase backup:', error);
+      return false;
+    }
+  }
+
+  async isFirebaseEnabled(): Promise<boolean> {
+    try {
+      return await firebaseStorageService.isFirebaseAvailable();
+    } catch (error) {
+      return false;
+    }
   }
 
   // 导出和导入

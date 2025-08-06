@@ -9,6 +9,8 @@ import { useMessageHandler } from './useMessageHandler';
 import { useChatGroups } from './useChatGroups';
 import { applyImageCachePolicy, generateUniqueId, logService } from '../utils/appUtils';
 import { CHAT_HISTORY_SESSIONS_KEY } from '../constants/appConstants';
+import { firebaseStorageService } from '../services/firebaseStorageService';
+import { persistentStoreService } from '../services/persistentStore';
 
 export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean = false) => {
     // 1. Core application state, now managed centrally in the main hook
@@ -46,16 +48,177 @@ export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean 
                     const sessionsForStorage = applyImageCachePolicy(sessionsToSave);
                     localStorage.setItem(CHAT_HISTORY_SESSIONS_KEY, JSON.stringify(sessionsForStorage));
                     logService.info(`Successfully saved ${sessionsToSave.length} sessions to localStorage.`);
+                    
+                    // [新增] 异步备份到 Firebase (不阻塞主要流程)
+                    backupToFirebaseAsync(sessionsToSave);
+                    
                     return true;
                 } catch (error: any) {
                     // 捕获"超出配额"的错误
                     if (error.name === 'QuotaExceededError' || (error.message && error.message.toLowerCase().includes('quota'))) {
                         logService.warn('LocalStorage quota exceeded. Attempting to prune sessions.');
+                        
+                        // [新增] 存储满时，尝试备份到 Firebase 并显示带导出功能的对话框
+                        handleStorageFullWithBackup(sessionsToSave);
+                        
                         return false;
                     }
                     // 对于其他未知错误，我们只记录日志，不进行清理
                     logService.error('Failed to save sessions to localStorage due to an unexpected error:', error);
                     return true; 
+                }
+            };
+
+            // [新增] Firebase 异步备份函数
+            const backupToFirebaseAsync = async (sessions: SavedChatSession[]): Promise<void> => {
+                try {
+                    const persistentStore = persistentStoreService.exportData();
+                    await firebaseStorageService.backupToFirebase(sessions, persistentStore);
+                    logService.info('Sessions backed up to Firebase successfully');
+                } catch (error) {
+                    logService.warn('Firebase backup failed (non-critical):', error);
+                }
+            };
+
+            // [新增] 处理存储满的情况，包括备份和显示对话框
+            const handleStorageFullWithBackup = async (sessions: SavedChatSession[]): Promise<void> => {
+                try {
+                    // 先尝试备份到 Firebase
+                    const persistentStore = persistentStoreService.exportData();
+                    const firebaseBackupSuccess = await firebaseStorageService.backupToFirebase(sessions, persistentStore);
+                    
+                    if (firebaseBackupSuccess) {
+                        showStorageFullDialogWithFirebaseBackup();
+                    } else {
+                        showStorageFullDialogWithExportOnly();
+                    }
+                } catch (error) {
+                    logService.error('Failed to backup to Firebase during storage full event:', error);
+                    showStorageFullDialogWithExportOnly();
+                }
+            };
+
+            // [新增] 显示存储满对话框（包含 Firebase 备份信息）
+            const showStorageFullDialogWithFirebaseBackup = (): void => {
+                const dialog = document.createElement('div');
+                dialog.id = 'storage-full-dialog';
+                dialog.innerHTML = `
+                    <div style="
+                        position: fixed; top: 0; left: 0; right: 0; bottom: 0; 
+                        background: rgba(0,0,0,0.5); z-index: 10000; 
+                        display: flex; align-items: center; justify-content: center;
+                    ">
+                        <div style="
+                            background: white; padding: 24px; border-radius: 8px; 
+                            max-width: 500px; margin: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                        ">
+                            <h2 style="color: #333; margin: 0 0 16px 0; font-size: 18px;">存储空间已满</h2>
+                            <p style="color: #666; margin: 0 0 16px 0; line-height: 1.5;">
+                                浏览器存储空间不足，但您的聊天记录已自动备份到云端。
+                            </p>
+                            <p style="color: #059669; margin: 0 0 20px 0; font-size: 14px;">
+                                ✅ 数据已安全备份到 Firebase 云存储
+                            </p>
+                            <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                                <button id="export-data-btn" style="
+                                    background: #2563eb; color: white; border: none; 
+                                    padding: 8px 16px; border-radius: 4px; cursor: pointer;
+                                ">导出本地数据</button>
+                                <button id="restore-from-firebase-btn" style="
+                                    background: #059669; color: white; border: none; 
+                                    padding: 8px 16px; border-radius: 4px; cursor: pointer;
+                                ">恢复云端数据</button>
+                                <button id="close-dialog-btn" style="
+                                    background: #6b7280; color: white; border: none; 
+                                    padding: 8px 16px; border-radius: 4px; cursor: pointer;
+                                ">确定</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                addDialogEventListeners(dialog);
+            };
+
+            // [新增] 显示存储满对话框（仅本地导出）
+            const showStorageFullDialogWithExportOnly = (): void => {
+                const dialog = document.createElement('div');
+                dialog.id = 'storage-full-dialog';
+                dialog.innerHTML = `
+                    <div style="
+                        position: fixed; top: 0; left: 0; right: 0; bottom: 0; 
+                        background: rgba(0,0,0,0.5); z-index: 10000; 
+                        display: flex; align-items: center; justify-content: center;
+                    ">
+                        <div style="
+                            background: white; padding: 24px; border-radius: 8px; 
+                            max-width: 500px; margin: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                        ">
+                            <h2 style="color: #333; margin: 0 0 16px 0; font-size: 18px;">存储空间已满</h2>
+                            <p style="color: #666; margin: 0 0 20px 0; line-height: 1.5;">
+                                浏览器存储空间不足。建议导出聊天记录后清理部分数据。
+                            </p>
+                            <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                                <button id="export-data-btn" style="
+                                    background: #2563eb; color: white; border: none; 
+                                    padding: 8px 16px; border-radius: 4px; cursor: pointer;
+                                ">导出数据</button>
+                                <button id="close-dialog-btn" style="
+                                    background: #6b7280; color: white; border: none; 
+                                    padding: 8px 16px; border-radius: 4px; cursor: pointer;
+                                ">确定</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                addDialogEventListeners(dialog);
+            };
+
+            // [新增] 为对话框添加事件监听器
+            const addDialogEventListeners = (dialog: HTMLElement): void => {
+                dialog.querySelector('#export-data-btn')?.addEventListener('click', () => {
+                    exportSessionsToJSON();
+                    dialog.remove();
+                });
+
+                dialog.querySelector('#restore-from-firebase-btn')?.addEventListener('click', async () => {
+                    try {
+                        const restored = await firebaseStorageService.restoreFromFirebase();
+                        if (restored && restored.sessions) {
+                            setSavedSessions(restored.sessions);
+                            alert('云端数据恢复成功！');
+                        } else {
+                            alert('未找到云端备份数据。');
+                        }
+                    } catch (error) {
+                        alert('恢复云端数据失败，请检查网络连接。');
+                    }
+                    dialog.remove();
+                });
+
+                dialog.querySelector('#close-dialog-btn')?.addEventListener('click', () => {
+                    dialog.remove();
+                });
+
+                document.body.appendChild(dialog);
+            };
+
+            // [新增] 导出会话数据为 JSON 文件
+            const exportSessionsToJSON = (): void => {
+                try {
+                    const dataStr = JSON.stringify(newSessions, null, 2);
+                    const dataUri = `data:application/json;charset=utf-8,${encodeURIComponent(dataStr)}`;
+                    
+                    const link = document.createElement('a');
+                    link.setAttribute('href', dataUri);
+                    link.setAttribute('download', `chat-sessions-${new Date().toISOString().split('T')[0]}.json`);
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    
+                    logService.info('Chat sessions exported successfully');
+                } catch (error) {
+                    logService.error('Failed to export sessions:', error);
+                    alert('导出失败，请重试。');
                 }
             };
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { Settings, ChevronDown, Check, Loader2, Trash2, Pin, MessagesSquare, Menu, FilePlus2, Wand2, Lock, FileText, PictureInPicture } from 'lucide-react'; 
+import { Settings, ChevronDown, Check, Loader2, Trash2, Pin, MessagesSquare, Menu, FilePlus2, Wand2, Lock, FileText, PictureInPicture, TestTube } from 'lucide-react'; 
 import { ModelOption } from '../types';
 import { translations, getResponsiveValue } from '../utils/appUtils';
 
@@ -23,6 +23,8 @@ interface HeaderProps {
   isPictureInPictureSupported?: boolean;
   isPictureInPictureActive?: boolean;
   onTogglePictureInPicture?: () => void;
+  // API 管理功能
+  onOpenApiManagement?: () => void;
   t: (key: keyof typeof translations) => string;
   isKeyLocked: boolean;
   defaultModelId?: string;
@@ -52,6 +54,8 @@ export const Header: React.FC<HeaderProps> = ({
   isPictureInPictureSupported = false,
   isPictureInPictureActive = false,
   onTogglePictureInPicture,
+  // API 管理功能
+  onOpenApiManagement,
   t,
   isKeyLocked,
 }) => {
@@ -248,6 +252,18 @@ export const Header: React.FC<HeaderProps> = ({
             title={isPictureInPictureActive ? "退出画中画模式" : "进入画中画模式"}
           >
             <PictureInPicture size={getResponsiveValue(16, 18)} />
+          </button>
+        )}
+        
+        {/* API 管理按钮 */}
+        {onOpenApiManagement && (
+          <button
+            onClick={onOpenApiManagement}
+            className="p-2 sm:p-2.5 bg-[var(--theme-bg-tertiary)] hover:bg-[var(--theme-bg-input)] text-[var(--theme-icon-settings)] rounded-lg shadow transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[var(--theme-bg-primary)] focus:ring-[var(--theme-border-focus)] flex items-center justify-center hover:scale-105 active:scale-100"
+            aria-label="API 管理与测试"
+            title="API 管理与测试"
+          >
+            <TestTube size={getResponsiveValue(16, 18)} />
           </button>
         )}
         
