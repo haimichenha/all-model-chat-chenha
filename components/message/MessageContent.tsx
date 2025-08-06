@@ -16,6 +16,7 @@ import { MermaidBlock } from './MermaidBlock';
 import { GraphvizBlock } from './GraphvizBlock';
 import { translations } from '../../utils/appUtils';
 import { GroundedResponse } from './GroundedResponse';
+import { MessageContextMenu } from '../MessageContextMenu';
 
 const renderThoughtsMarkdown = (content: string) => {
   const rawMarkup = marked.parse(content || ''); 
@@ -60,10 +61,19 @@ interface MessageContentProps {
     baseFontSize: number;
     expandCodeBlocksByDefault: boolean;
     t: (key: keyof typeof translations) => string;
+    onPipRequest?: (text: string, type: 'explain' | 'reanswer') => void; // New prop for PiP requests
 }
 
-export const MessageContent: React.FC<MessageContentProps> = React.memo(({ message, onImageClick, onOpenHtmlPreview, showThoughts, baseFontSize, expandCodeBlocksByDefault, t }) => {
+export const MessageContent: React.FC<MessageContentProps> = React.memo(({ message, onImageClick, onOpenHtmlPreview, showThoughts, baseFontSize, expandCodeBlocksByDefault, t, onPipRequest }) => {
     const { content, files, isLoading, thoughts, generationStartTime, generationEndTime, audioSrc, groundingMetadata } = message;
+    
+    // Context menu state
+    const [contextMenu, setContextMenu] = useState<{
+        x: number;
+        y: number;
+        selectedText: string;
+        isVisible: boolean;
+    }>({ x: 0, y: 0, selectedText: '', isVisible: false });
     
     const showPrimaryThinkingIndicator = isLoading && !content && !audioSrc && (!showThoughts || !thoughts);
     const areThoughtsVisible = message.role === 'model' && thoughts && showThoughts;
@@ -72,6 +82,47 @@ export const MessageContent: React.FC<MessageContentProps> = React.memo(({ messa
     useEffect(() => {
       codeBlockCounter.current = 0; // Reset on each render of message content
     });
+
+    // Handle right-click on content to show context menu
+    const handleContextMenu = (e: React.MouseEvent) => {
+        e.preventDefault();
+        
+        const selection = window.getSelection();
+        const selectedText = selection?.toString().trim() || '';
+        
+        if (selectedText && selectedText.length > 0 && onPipRequest) {
+            setContextMenu({
+                x: e.clientX,
+                y: e.clientY,
+                selectedText,
+                isVisible: true
+            });
+        }
+    };
+
+    const handleContextMenuClose = () => {
+        setContextMenu(prev => ({ ...prev, isVisible: false }));
+    };
+
+    const handleExplain = (text: string) => {
+        onPipRequest?.(text, 'explain');
+    };
+
+    const handleReAnswer = (text: string) => {
+        onPipRequest?.(text, 'reanswer');
+    };
+
+    // Close context menu when clicking elsewhere
+    useEffect(() => {
+        const handleClickOutside = () => {
+            if (contextMenu.isVisible) {
+                handleContextMenuClose();
+            }
+        };
+
+        document.addEventListener('click', handleClickOutside);
+        return () => document.removeEventListener('click', handleClickOutside);
+    }, [contextMenu.isVisible]);
 
     const lastThought = useMemo(() => {
         if (!thoughts) return null;
@@ -185,7 +236,22 @@ export const MessageContent: React.FC<MessageContentProps> = React.memo(({ messa
             {content && groundingMetadata ? (
               <GroundedResponse text={content} metadata={groundingMetadata} onOpenHtmlPreview={onOpenHtmlPreview} />
             ) : content && (
-                <div className="markdown-body" style={{ fontSize: `${baseFontSize}px` }}> 
+                <div 
+                    className="markdown-body" 
+                    style={{ fontSize: `${baseFontSize}px` }}
+                    onContextMenu={handleContextMenu}
+                    onMouseUp={() => {
+                        // Clear selection when context menu is not shown
+                        if (!contextMenu.isVisible) {
+                            setTimeout(() => {
+                                const selection = window.getSelection();
+                                if (selection && selection.rangeCount > 0) {
+                                    selection.removeAllRanges();
+                                }
+                            }, 100);
+                        }
+                    }}
+                > 
                     <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeRaw, rehypeKatex, rehypeHighlight]} components={components}>
                         {content}
                     </ReactMarkdown>
@@ -204,6 +270,17 @@ export const MessageContent: React.FC<MessageContentProps> = React.memo(({ messa
                     {(isLoading || (generationStartTime && generationEndTime)) && <MessageTimer startTime={generationStartTime} endTime={generationEndTime} isLoading={isLoading} />}
                 </div>
             )}
+            
+            {/* Context Menu */}
+            <MessageContextMenu
+                x={contextMenu.x}
+                y={contextMenu.y}
+                selectedText={contextMenu.selectedText}
+                onExplain={handleExplain}
+                onReAnswer={handleReAnswer}
+                onClose={handleContextMenuClose}
+                isVisible={contextMenu.isVisible}
+            />
         </>
     );
 });

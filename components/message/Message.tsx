@@ -222,10 +222,11 @@ interface MessageProps {
     onTextToSpeech: (messageId: string, text: string) => void;
     ttsMessageId: string | null;
     t: (key: keyof typeof translations) => string;
+    onPipRequest?: (text: string, type: 'explain' | 'reanswer') => void; // New prop
 }
 
 export const Message: React.FC<MessageProps> = React.memo((props) => {
-    const { message, prevMessage, messageIndex, onEditMessage, onDeleteMessage, onRetryMessage, onImageClick, onOpenHtmlPreview, showThoughts, themeColors, themeId, baseFontSize, expandCodeBlocksByDefault, t, onTextToSpeech, ttsMessageId } = props;
+    const { message, prevMessage, messageIndex, onEditMessage, onDeleteMessage, onRetryMessage, onImageClick, onOpenHtmlPreview, showThoughts, themeColors, themeId, baseFontSize, expandCodeBlocksByDefault, t, onTextToSpeech, ttsMessageId, onPipRequest } = props;
     
     const isGrouped = prevMessage &&
         prevMessage.role === message.role &&
@@ -298,6 +299,7 @@ export const Message: React.FC<MessageProps> = React.memo((props) => {
                     baseFontSize={baseFontSize}
                     expandCodeBlocksByDefault={expandCodeBlocksByDefault}
                     t={t}
+                    onPipRequest={onPipRequest}
                 />
             </div>
             {message.role === 'user' && iconAndActions}

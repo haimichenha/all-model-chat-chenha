@@ -15,6 +15,9 @@ import { SettingsModal } from './components/SettingsModal';
 import { LogViewer } from './components/LogViewer';
 import { PreloadedMessagesModal } from './components/PreloadedMessagesModal';
 import { geminiServiceInstance } from './services/geminiService';
+import { usePictureInPicture } from './hooks/usePictureInPicture';
+import { PipDialog } from './components/PipDialog';
+import { createPortal } from 'react-dom';
 
 const App: React.FC = () => {
   const { appSettings, setAppSettings, currentTheme, language } = useAppSettings();
@@ -105,6 +108,74 @@ const App: React.FC = () => {
   const [isPreloadedMessagesModalOpen, setIsPreloadedMessagesModalOpen] = useState<boolean>(false);
   const [isHistorySidebarOpen, setIsHistorySidebarOpen] = useState<boolean>(window.innerWidth >= 768);
   const [isLogViewerOpen, setIsLogViewerOpen] = useState<boolean>(false);
+  
+  // Picture-in-Picture state and hooks
+  const { isPipSupported, isPipActive, togglePip, pipContainer } = usePictureInPicture();
+  const [pipDialog, setPipDialog] = useState<{
+    isVisible: boolean;
+    originalText: string;
+    requestType: 'explain' | 'reanswer';
+    response?: string;
+    isLoading?: boolean;
+  }>({ isVisible: false, originalText: '', requestType: 'explain' });
+  
+  // Handle PiP requests from message context menu
+  const handlePipRequest = useCallback(async (text: string, type: 'explain' | 'reanswer') => {
+    setPipDialog({
+      isVisible: true,
+      originalText: text,
+      requestType: type,
+      isLoading: true
+    });
+
+    try {
+      const prompt = type === 'explain' 
+        ? `请详细解释以下内容：\n\n${text}`
+        : `请重新回答以下问题或重新解释以下内容：\n\n${text}`;
+      
+      // Use geminiService directly for PiP responses to avoid adding to chat history
+      const response = await geminiServiceInstance.sendMessage(
+        prompt,
+        [],
+        currentChatSettings.modelId || appSettings.modelId,
+        currentChatSettings.systemInstruction,
+        { temperature: currentChatSettings.temperature, topP: currentChatSettings.topP },
+        currentChatSettings.showThoughts,
+        currentChatSettings.thinkingBudget || 2048,
+        currentChatSettings.lockedApiKey,
+        currentChatSettings.isGoogleSearchEnabled,
+        currentChatSettings.isCodeExecutionEnabled,
+        currentChatSettings.isUrlContextEnabled
+      );
+      
+      setPipDialog(prev => ({
+        ...prev,
+        response: response.content || '抱歉，无法生成回答。',
+        isLoading: false
+      }));
+    } catch (error) {
+      logService.error('Failed to generate PiP response:', error);
+      setPipDialog(prev => ({
+        ...prev,
+        response: '生成回答时出错，请重试。',
+        isLoading: false
+      }));
+    }
+  }, [currentChatSettings, appSettings]);
+
+  const handlePipConfirm = useCallback((response: string) => {
+    // Add the response as a new message in the chat
+    handleSendMessage({ text: response });
+    setPipDialog({ isVisible: false, originalText: '', requestType: 'explain' });
+  }, [handleSendMessage]);
+
+  const handlePipCancel = useCallback(() => {
+    setPipDialog({ isVisible: false, originalText: '', requestType: 'explain' });
+  }, []);
+
+  const handlePipClose = useCallback(() => {
+    setPipDialog({ isVisible: false, originalText: '', requestType: 'explain' });
+  }, []);
   
   const handleSaveSettings = (newSettings: AppSettings) => {
     // Save the new settings as the global default for subsequent new chats
@@ -338,6 +409,9 @@ const App: React.FC = () => {
           isHistorySidebarOpen={isHistorySidebarOpen}
           onLoadCanvasPrompt={handleLoadCanvasHelperPromptAndSave}
           isCanvasPromptActive={isCanvasPromptActive}
+          isPictureInPictureSupported={isPipSupported}
+          isPictureInPictureActive={isPipActive}
+          onTogglePictureInPicture={togglePip}
           t={t}
           isKeyLocked={!!currentChatSettings.lockedApiKey}
         />
@@ -402,6 +476,7 @@ const App: React.FC = () => {
           language={language}
           showScrollToBottom={showScrollToBottom}
           onScrollToBottom={scrollToBottom}
+          onPipRequest={handlePipRequest}
         />
         <ChatInput
           appSettings={appSettings}
@@ -444,6 +519,47 @@ const App: React.FC = () => {
           setIsHelpModalOpen={() => {}}
         />
       </div>
+
+      {/* Picture-in-Picture Dialog */}
+      <PipDialog
+        isVisible={pipDialog.isVisible}
+        originalText={pipDialog.originalText}
+        requestType={pipDialog.requestType}
+        response={pipDialog.response}
+        isLoading={pipDialog.isLoading}
+        onConfirm={handlePipConfirm}
+        onCancel={handlePipCancel}
+        onClose={handlePipClose}
+      />
+
+      {/* Picture-in-Picture Window Content */}
+      {isPipActive && pipContainer && createPortal(
+        <div className={`h-full bg-[var(--theme-bg-secondary)] text-[var(--theme-text-primary)] theme-${currentTheme.id}`}>
+          <MessageList
+            messages={messages}
+            messagesEndRef={messagesEndRef}
+            scrollContainerRef={scrollContainerRef}
+            onScrollContainerScroll={() => {}}
+            onEditMessage={handleEditMessage}
+            onDeleteMessage={handleDeleteMessage}
+            onRetryMessage={handleRetryMessage}
+            showThoughts={currentChatSettings.showThoughts}
+            themeColors={currentTheme.colors}
+            themeId={currentTheme.id}
+            baseFontSize={appSettings.baseFontSize}
+            expandCodeBlocksByDefault={appSettings.expandCodeBlocksByDefault}
+            onSuggestionClick={handleSuggestionClick}
+            onTextToSpeech={handleTextToSpeech}
+            ttsMessageId={ttsMessageId}
+            t={t}
+            language={language}
+            showScrollToBottom={false}
+            onScrollToBottom={() => {}}
+            onPipRequest={handlePipRequest}
+          />
+        </div>,
+        pipContainer
+      )}
     </div>
   );
 };

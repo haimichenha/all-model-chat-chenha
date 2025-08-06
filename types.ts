@@ -240,6 +240,7 @@ export interface MessageListProps {
   onScrollToNextTurn?: () => void;
   showScrollToBottom?: boolean;
   onScrollToBottom?: () => void;
+  onPipRequest?: (text: string, type: 'explain' | 'reanswer') => void;
 }
 
 export interface PreloadedMessage {
