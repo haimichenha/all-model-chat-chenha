@@ -3,6 +3,7 @@ import { Plus, Settings, TestTube, CheckCircle, XCircle, Clock, Loader2, Trash2,
 import { apiTestingService, ApiConfiguration, ApiTestResult } from '../services/apiTestingService';
 import { apiRotationService } from '../services/apiRotationService';
 import { logService } from '../services/logService';
+import { TAB_CYCLE_MODELS } from '../constants/appConstants';
 
 interface ApiManagementModalProps {
   isOpen: boolean;
@@ -328,9 +329,21 @@ const ApiConfigForm: React.FC<ApiConfigFormProps> = ({ config, onSave, onCancel 
     name: config?.name || '',
     apiKey: config?.apiKey || '',
     endpoint: config?.endpoint || '',
-    modelId: config?.modelId || 'gemini-pro',
+    modelId: config?.modelId || 'gemini-2.5-flash',
+    customModelId: '',
     isSelected: config?.isSelected || false
   });
+
+  // If the current modelId is not in TAB_CYCLE_MODELS, treat it as custom
+  useEffect(() => {
+    if (config?.modelId && !TAB_CYCLE_MODELS.includes(config.modelId)) {
+      setFormData(prev => ({
+        ...prev,
+        modelId: 'custom',
+        customModelId: config.modelId
+      }));
+    }
+  }, [config?.modelId]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -340,10 +353,20 @@ const ApiConfigForm: React.FC<ApiConfigFormProps> = ({ config, onSave, onCancel 
       return;
     }
 
+    // Use custom model ID if selected, otherwise use the selected standard model
+    const finalModelId = formData.modelId === 'custom' 
+      ? (formData.customModelId.trim() || 'gemini-pro')
+      : formData.modelId;
+
+    const finalData = {
+      ...formData,
+      modelId: finalModelId
+    };
+
     if (config) {
-      onSave({ ...config, ...formData });
+      onSave({ ...config, ...finalData });
     } else {
-      onSave(formData);
+      onSave(finalData);
     }
   };
 
@@ -390,13 +413,41 @@ const ApiConfigForm: React.FC<ApiConfigFormProps> = ({ config, onSave, onCancel 
           
           <div>
             <label className="block text-sm font-medium mb-1">模型 ID</label>
-            <input
-              type="text"
-              value={formData.modelId}
-              onChange={(e) => setFormData(prev => ({ ...prev, modelId: e.target.value }))}
-              className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700"
-              placeholder="gemini-pro"
-            />
+            <div className="relative">
+              <select
+                value={formData.modelId}
+                onChange={(e) => setFormData(prev => ({ ...prev, modelId: e.target.value }))}
+                className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 appearance-none pr-8"
+                aria-label="选择 AI 模型"
+              >
+                {TAB_CYCLE_MODELS.map((modelId) => {
+                  const name = modelId.includes('/') 
+                    ? `Gemini ${modelId.split('/')[1]}`.replace('gemini-','').replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+                    : `Gemini ${modelId.replace('gemini-','').replace(/-/g, ' ')}`.replace(/\b\w/g, l => l.toUpperCase());
+                  return (
+                    <option key={modelId} value={modelId}>
+                      {name}
+                    </option>
+                  );
+                })}
+                {/* Allow custom input by providing an "other" option and manual input */}
+                <option value="custom">自定义模型...</option>
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
+                <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                  <path d="M5.516 7.548c.436-.446 1.043-.48 1.576 0L10 10.405l2.908-2.857c.533-.48 1.14-.446 1.576 0 .436.445.408 1.197 0 1.615l-3.695 3.63c-.533.48-1.14.446-1.576 0L5.516 9.163c-.408-.418-.436-1.17 0-1.615z"/>
+                </svg>
+              </div>
+            </div>
+            {formData.modelId === 'custom' && (
+              <input
+                type="text"
+                value={formData.customModelId || ''}
+                onChange={(e) => setFormData(prev => ({ ...prev, customModelId: e.target.value }))}
+                className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 mt-2"
+                placeholder="请输入自定义模型ID，如：gemini-pro"
+              />
+            )}
           </div>
           
           <div>
