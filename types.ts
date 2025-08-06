@@ -192,6 +192,19 @@ export interface GeminiService {
     onError: (error: Error) => void,
     onComplete: (parts: Part[], thoughtsText?: string, usageMetadata?: UsageMetadata, groundingMetadata?: any) => void
   ) => Promise<void>;
+  sendMessage: (
+    prompt: string,
+    history: ChatHistoryItem[],
+    modelId: string,
+    systemInstruction: string,
+    config: { temperature?: number; topP?: number },
+    showThoughts: boolean,
+    thinkingBudget: number,
+    apiKey: string,
+    isGoogleSearchEnabled: boolean,
+    isCodeExecutionEnabled: boolean,
+    isUrlContextEnabled: boolean
+  ) => Promise<{ content: string; thoughts?: string; usageMetadata?: any; groundingMetadata?: any }>;
   generateImages: (apiKey: string, modelId: string, prompt: string, aspectRatio: string, abortSignal: AbortSignal) => Promise<string[]>;
   generateSpeech: (apiKey: string, modelId: string, text: string, voice: string, abortSignal: AbortSignal) => Promise<string>;
   transcribeAudio: (apiKey: string, audioFile: File, modelId: string, isThinkingEnabled: boolean) => Promise<string>;

@@ -33,8 +33,8 @@ export const usePictureInPicture = () => {
 
         try {
             const pipWin = await window.documentPictureInPicture!.requestWindow({
-                width: 500, // A reasonable default width
-                height: 700, // A reasonable default height
+                width: 400, // More compact width for better UX
+                height: 600, // More compact height for better UX
             });
 
             // Copy all head elements from the main document to the PiP window.
