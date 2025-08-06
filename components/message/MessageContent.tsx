@@ -83,20 +83,60 @@ export const MessageContent: React.FC<MessageContentProps> = React.memo(({ messa
       codeBlockCounter.current = 0; // Reset on each render of message content
     });
 
-    // Handle right-click on content to show context menu
+    // Handle right-click on content to show context menu (only for model messages)
     const handleContextMenu = (e: React.MouseEvent) => {
+        // Only show context menu for AI model responses
+        if (message.role !== 'model' || !onPipRequest) {
+            return;
+        }
+        
         e.preventDefault();
         
         const selection = window.getSelection();
         const selectedText = selection?.toString().trim() || '';
         
-        if (selectedText && selectedText.length > 0 && onPipRequest) {
+        if (selectedText && selectedText.length > 0) {
             setContextMenu({
                 x: e.clientX,
                 y: e.clientY,
                 selectedText,
                 isVisible: true
             });
+        } else {
+            // If no text is selected but right-clicked, try to get text around the click position
+            const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+            if (range) {
+                const node = range.startContainer;
+                if (node.nodeType === Node.TEXT_NODE && node.textContent) {
+                    // Select the word or sentence around the cursor
+                    const textContent = node.textContent;
+                    const offset = range.startOffset;
+                    
+                    // Find word boundaries
+                    let start = offset;
+                    let end = offset;
+                    
+                    // Expand backwards to find start of word/sentence
+                    while (start > 0 && !/[\s.,!?;:]/.test(textContent[start - 1])) {
+                        start--;
+                    }
+                    
+                    // Expand forwards to find end of word/sentence
+                    while (end < textContent.length && !/[\s.,!?;:]/.test(textContent[end])) {
+                        end++;
+                    }
+                    
+                    const contextText = textContent.substring(start, end).trim();
+                    if (contextText.length > 0) {
+                        setContextMenu({
+                            x: e.clientX,
+                            y: e.clientY,
+                            selectedText: contextText,
+                            isVisible: true
+                        });
+                    }
+                }
+            }
         }
     };
 
@@ -240,8 +280,11 @@ export const MessageContent: React.FC<MessageContentProps> = React.memo(({ messa
                     className="markdown-body" 
                     style={{ fontSize: `${baseFontSize}px` }}
                     onContextMenu={handleContextMenu}
-                    onMouseUp={() => {
-                        // Clear selection when context menu is not shown
+                    onMouseUp={(e) => {
+                        // Don't clear selection on right-click
+                        if (e.button === 2) return;
+                        
+                        // Clear selection when context menu is not shown and it's a normal left-click
                         if (!contextMenu.isVisible) {
                             setTimeout(() => {
                                 const selection = window.getSelection();
