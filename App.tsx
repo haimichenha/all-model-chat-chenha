@@ -17,6 +17,7 @@ import { PreloadedMessagesModal } from './components/PreloadedMessagesModal';
 import { geminiServiceInstance } from './services/geminiService';
 import { usePictureInPicture } from './hooks/usePictureInPicture';
 import { PipDialog } from './components/PipDialog';
+import { ApiManagementModal } from './components/ApiManagementModal';
 import { createPortal } from 'react-dom';
 
 const App: React.FC = () => {
@@ -108,6 +109,7 @@ const App: React.FC = () => {
   const [isPreloadedMessagesModalOpen, setIsPreloadedMessagesModalOpen] = useState<boolean>(false);
   const [isHistorySidebarOpen, setIsHistorySidebarOpen] = useState<boolean>(window.innerWidth >= 768);
   const [isLogViewerOpen, setIsLogViewerOpen] = useState<boolean>(false);
+  const [isApiManagementModalOpen, setIsApiManagementModalOpen] = useState<boolean>(false);
   
   // Picture-in-Picture state and hooks
   const { isPipSupported, isPipActive, togglePip, pipContainer } = usePictureInPicture();
@@ -412,6 +414,7 @@ const App: React.FC = () => {
           isPictureInPictureSupported={isPipSupported}
           isPictureInPictureActive={isPipActive}
           onTogglePictureInPicture={togglePip}
+          onOpenApiManagement={() => setIsApiManagementModalOpen(true)}
           t={t}
           isKeyLocked={!!currentChatSettings.lockedApiKey}
         />
@@ -452,6 +455,13 @@ const App: React.FC = () => {
               onLoadScenario={handleLoadPreloadedScenario}
               onImportScenario={handleImportPreloadedScenario}
               onExportScenario={handleExportPreloadedScenario}
+              t={t}
+            />
+          )}
+          {isApiManagementModalOpen && (
+            <ApiManagementModal
+              isOpen={isApiManagementModalOpen}
+              onClose={() => setIsApiManagementModalOpen(false)}
               t={t}
             />
           )}
