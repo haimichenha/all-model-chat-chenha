@@ -349,6 +349,53 @@ class GeminiServiceImpl implements GeminiService {
         }, apiKey);
     }
 
+    /**
+     * Convenience method that wraps sendMessageNonStream and returns a Promise with the response content
+     * This method is used by components that need a simple async/await interface
+     */
+    async sendMessage(
+        prompt: string,
+        history: ChatHistoryItem[],
+        modelId: string,
+        systemInstruction: string,
+        config: { temperature?: number; topP?: number },
+        showThoughts: boolean,
+        thinkingBudget: number,
+        apiKey: string,
+        isGoogleSearchEnabled: boolean,
+        isCodeExecutionEnabled: boolean,
+        isUrlContextEnabled: boolean
+    ): Promise<{ content: string; thoughts?: string; usageMetadata?: any; groundingMetadata?: any }> {
+        return new Promise((resolve, reject) => {
+            const abortSignal = new AbortController().signal;
+            const historyWithPrompt = [...history, { role: 'user' as const, parts: [{ text: prompt }] }];
+            
+            this.sendMessageNonStream(
+                apiKey,
+                modelId,
+                historyWithPrompt,
+                systemInstruction,
+                config,
+                showThoughts,
+                thinkingBudget,
+                isGoogleSearchEnabled,
+                isCodeExecutionEnabled,
+                isUrlContextEnabled,
+                abortSignal,
+                (error: Error) => reject(error),
+                (parts: Part[], thoughtsText?: string, usageMetadata?: any, groundingMetadata?: any) => {
+                    const content = parts.map(p => p.text || '').join('');
+                    resolve({
+                        content,
+                        thoughts: thoughtsText,
+                        usageMetadata,
+                        groundingMetadata
+                    });
+                }
+            );
+        });
+    }
+
     async processTextInChunks(
         apiKey: string, modelId: string, text: string, systemInstruction: string, config: { temperature?: number; topP?: number },
         abortSignal: AbortSignal, onChunkProcessed: (chunkIndex: number, totalChunks: number, summary: string) => void,
