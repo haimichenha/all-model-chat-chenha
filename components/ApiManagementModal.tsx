@@ -1,20 +1,29 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Settings, TestTube, CheckCircle, XCircle, Clock, Loader2, Trash2, Edit3 } from 'lucide-react';
+import { Plus, Settings, TestTube, CheckCircle, XCircle, Clock, Loader2, Trash2, Edit3, Download, Upload } from 'lucide-react';
 import { apiTestingService, ApiConfiguration, ApiTestResult } from '../services/apiTestingService';
 import { apiRotationService } from '../services/apiRotationService';
+import { persistentStoreService } from '../services/persistentStoreService';
 import { logService } from '../services/logService';
 import { TAB_CYCLE_MODELS } from '../constants/appConstants';
+import { ModelOption, ApiConfig } from '../types';
+import { 
+  apiConfigsToApiConfigurations, 
+  isValidApiConfig,
+  getApiConfigDisplayInfo 
+} from '../utils/apiConfigUtils';
 
 interface ApiManagementModalProps {
   isOpen: boolean;
   onClose: () => void;
   t: (key: string) => string;
+  availableModels?: ModelOption[];
 }
 
 export const ApiManagementModal: React.FC<ApiManagementModalProps> = ({
   isOpen,
   onClose,
-  t
+  t,
+  availableModels = []
 }) => {
   const [apiConfigs, setApiConfigs] = useState<ApiConfiguration[]>([]);
   const [testResults, setTestResults] = useState<Map<string, ApiTestResult>>(new Map());
@@ -22,11 +31,25 @@ export const ApiManagementModal: React.FC<ApiManagementModalProps> = ({
   const [editingConfig, setEditingConfig] = useState<ApiConfiguration | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [rotationSettings, setRotationSettings] = useState(apiRotationService.getSettings());
+  
+  // New state for managing existing app settings
+  const [existingApiConfigs, setExistingApiConfigs] = useState<ApiConfig[]>([]);
+  const [showImportSection, setShowImportSection] = useState(true);
+  const [selectedImportIds, setSelectedImportIds] = useState<Set<string>>(new Set());
 
   // Load existing configurations
   useEffect(() => {
     if (isOpen) {
+      // Load current API rotation configurations
       setApiConfigs(apiRotationService.getApiConfigurations());
+      
+      // Load existing API configurations from app settings
+      const allAppApiConfigs = persistentStoreService.getAllApiConfigs();
+      const validAppApiConfigs = allAppApiConfigs.filter(isValidApiConfig);
+      setExistingApiConfigs(validAppApiConfigs);
+      
+      // Clear previous selections
+      setSelectedImportIds(new Set());
     }
   }, [isOpen]);
 
@@ -97,6 +120,58 @@ export const ApiManagementModal: React.FC<ApiManagementModalProps> = ({
   const handleSaveRotationSettings = () => {
     apiRotationService.updateSettings(rotationSettings);
     alert('轮询设置已保存');
+  };
+
+  const handleImportSelected = () => {
+    if (selectedImportIds.size === 0) {
+      alert('请选择要导入的API配置');
+      return;
+    }
+
+    const selectedConfigs = existingApiConfigs.filter(config => selectedImportIds.has(config.id));
+    const importedApiConfigurations = apiConfigsToApiConfigurations(
+      selectedConfigs, 
+      'gemini-2.5-flash',
+      Array.from(selectedImportIds) // Mark all imported as selected
+    );
+
+    // Add all imported configurations to rotation service
+    importedApiConfigurations.forEach(config => {
+      // Check if already exists
+      const existing = apiConfigs.find(existing => existing.id === config.id);
+      if (!existing) {
+        apiRotationService.addApiConfiguration(config);
+      } else {
+        // Update existing configuration
+        apiRotationService.removeApiConfiguration(config.id);
+        apiRotationService.addApiConfiguration(config);
+      }
+    });
+
+    // Refresh the list
+    setApiConfigs(apiRotationService.getApiConfigurations());
+    setSelectedImportIds(new Set());
+    
+    logService.info(`Imported ${importedApiConfigurations.length} API configurations from app settings`);
+    alert(`成功导入 ${importedApiConfigurations.length} 个API配置`);
+  };
+
+  const handleToggleImportSelection = (configId: string) => {
+    const newSelected = new Set(selectedImportIds);
+    if (newSelected.has(configId)) {
+      newSelected.delete(configId);
+    } else {
+      newSelected.add(configId);
+    }
+    setSelectedImportIds(newSelected);
+  };
+
+  const handleSelectAllImport = () => {
+    if (selectedImportIds.size === existingApiConfigs.length) {
+      setSelectedImportIds(new Set());
+    } else {
+      setSelectedImportIds(new Set(existingApiConfigs.map(config => config.id)));
+    }
   };
 
   const getStatusIcon = (config: ApiConfiguration) => {
@@ -216,6 +291,99 @@ export const ApiManagementModal: React.FC<ApiManagementModalProps> = ({
           {/* Main Content */}
           <div className="flex-1 p-4 overflow-y-auto max-h-[calc(90vh-80px)]">
             
+            {/* Import from App Settings Section */}
+            {existingApiConfigs.length > 0 && (
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white flex items-center gap-2">
+                    <Download size={18} />
+                    从应用设置导入API配置
+                  </h3>
+                  <button
+                    onClick={() => setShowImportSection(!showImportSection)}
+                    className="text-sm text-blue-600 hover:text-blue-800"
+                  >
+                    {showImportSection ? '隐藏' : '显示'}
+                  </button>
+                </div>
+                
+                {showImportSection && (
+                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                    <p className="text-sm text-blue-700 dark:text-blue-300 mb-3">
+                      从您的应用设置中选择已配置的API进行导入，然后可以进行连通性测试和轮询设置。
+                    </p>
+                    
+                    {/* Select All / Import Actions */}
+                    <div className="flex gap-3 mb-3">
+                      <button
+                        onClick={handleSelectAllImport}
+                        className="text-sm bg-blue-100 text-blue-700 py-1 px-3 rounded hover:bg-blue-200"
+                      >
+                        {selectedImportIds.size === existingApiConfigs.length ? '取消全选' : '全选'}
+                      </button>
+                      <button
+                        onClick={handleImportSelected}
+                        disabled={selectedImportIds.size === 0}
+                        className="text-sm bg-blue-600 text-white py-1 px-3 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        导入所选 ({selectedImportIds.size})
+                      </button>
+                    </div>
+                    
+                    {/* Available Configurations */}
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                      {existingApiConfigs.map((config) => {
+                        const displayInfo = getApiConfigDisplayInfo(config);
+                        const isSelected = selectedImportIds.has(config.id);
+                        const isAlreadyImported = apiConfigs.some(existing => existing.id === config.id);
+                        
+                        return (
+                          <div 
+                            key={config.id} 
+                            className={`flex items-center space-x-3 p-2 rounded border ${
+                              isSelected 
+                                ? 'bg-blue-100 border-blue-300' 
+                                : 'bg-white border-gray-200'
+                            } ${isAlreadyImported ? 'opacity-60' : ''}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => handleToggleImportSelection(config.id)}
+                              disabled={isAlreadyImported}
+                            />
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-sm">{displayInfo.name}</span>
+                                {config.isDefault && (
+                                  <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded">
+                                    默认
+                                  </span>
+                                )}
+                                {isAlreadyImported && (
+                                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
+                                    已导入
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                {displayInfo.keyPreview}
+                                {displayInfo.endpoint && (
+                                  <span className="ml-2 text-blue-500">
+                                    ({new URL(displayInfo.endpoint).hostname})
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            
             {/* Action Buttons */}
             <div className="flex gap-3 mb-4">
               <button
@@ -223,7 +391,7 @@ export const ApiManagementModal: React.FC<ApiManagementModalProps> = ({
                 className="bg-green-600 text-white py-2 px-4 rounded hover:bg-green-700 flex items-center gap-2"
               >
                 <Plus size={16} />
-                添加 API
+                手动添加API
               </button>
               
               <button
@@ -232,69 +400,90 @@ export const ApiManagementModal: React.FC<ApiManagementModalProps> = ({
                 className="bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
               >
                 {isTesting ? <Loader2 size={16} className="animate-spin" /> : <TestTube size={16} />}
-                测试所有
+                测试所有已选API
               </button>
             </div>
 
             {/* API Configurations List */}
             <div className="space-y-3">
-              {apiConfigs.map((config) => (
-                <div key={config.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <input
-                        type="checkbox"
-                        checked={config.isSelected}
-                        onChange={(e) => handleToggleSelection(config.id, e.target.checked)}
-                      />
-                      <div>
-                        <h4 className="font-medium">{config.name}</h4>
-                        <p className="text-sm text-gray-500">
-                          {config.apiKey.substring(0, 10)}... | {config.modelId}
-                          {config.endpoint && (
-                            <span className="ml-2 text-blue-500">
-                              ({new URL(config.endpoint).hostname})
-                            </span>
-                          )}
-                        </p>
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white">
+                当前轮询配置 ({apiConfigs.length})
+              </h3>
+              
+              {apiConfigs.map((config) => {
+                const displayInfo = getApiConfigDisplayInfo(config);
+                
+                return (
+                  <div key={config.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <input
+                          type="checkbox"
+                          checked={config.isSelected}
+                          onChange={(e) => handleToggleSelection(config.id, e.target.checked)}
+                        />
+                        <div>
+                          <h4 className="font-medium flex items-center gap-2">
+                            {displayInfo.name}
+                            {displayInfo.isProxy && (
+                              <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded">
+                                代理
+                              </span>
+                            )}
+                          </h4>
+                          <p className="text-sm text-gray-500">
+                            {displayInfo.keyPreview} | {config.modelId}
+                            {displayInfo.endpoint && (
+                              <span className="ml-2 text-blue-500">
+                                ({new URL(displayInfo.endpoint).hostname})
+                              </span>
+                            )}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                    
-                    <div className="flex items-center space-x-3">
-                      <div className="flex items-center space-x-2">
-                        {getStatusIcon(config)}
-                        <span className="text-sm">{getStatusText(config)}</span>
+                      
+                      <div className="flex items-center space-x-3">
+                        <div className="flex items-center space-x-2">
+                          {getStatusIcon(config)}
+                          <span className="text-sm">{getStatusText(config)}</span>
+                        </div>
+                        
+                        <button
+                          onClick={() => handleTestSingle(config)}
+                          disabled={isTesting}
+                          className="text-blue-600 hover:text-blue-800 disabled:opacity-50"
+                          title="测试此API"
+                        >
+                          <TestTube size={16} />
+                        </button>
+                        
+                        <button
+                          onClick={() => setEditingConfig(config)}
+                          className="text-gray-600 hover:text-gray-800"
+                          title="编辑配置"
+                        >
+                          <Edit3 size={16} />
+                        </button>
+                        
+                        <button
+                          onClick={() => handleDeleteConfig(config.id)}
+                          className="text-red-600 hover:text-red-800"
+                          title="删除配置"
+                        >
+                          <Trash2 size={16} />
+                        </button>
                       </div>
-                      
-                      <button
-                        onClick={() => handleTestSingle(config)}
-                        disabled={isTesting}
-                        className="text-blue-600 hover:text-blue-800 disabled:opacity-50"
-                      >
-                        <TestTube size={16} />
-                      </button>
-                      
-                      <button
-                        onClick={() => setEditingConfig(config)}
-                        className="text-gray-600 hover:text-gray-800"
-                      >
-                        <Edit3 size={16} />
-                      </button>
-                      
-                      <button
-                        onClick={() => handleDeleteConfig(config.id)}
-                        className="text-red-600 hover:text-red-800"
-                      >
-                        <Trash2 size={16} />
-                      </button>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               
               {apiConfigs.length === 0 && (
                 <div className="text-center py-8 text-gray-500">
-                  暂无 API 配置，点击"添加 API"开始设置
+                  {existingApiConfigs.length > 0 
+                    ? '暂无API配置，请从上方导入现有配置或手动添加'
+                    : '暂无API配置，请先在应用设置中配置API或手动添加'
+                  }
                 </div>
               )}
             </div>
@@ -311,6 +500,7 @@ export const ApiManagementModal: React.FC<ApiManagementModalProps> = ({
             setShowAddForm(false);
             setEditingConfig(null);
           }}
+          availableModels={availableModels}
         />
       )}
     </div>
@@ -322,9 +512,10 @@ interface ApiConfigFormProps {
   config?: ApiConfiguration | null;
   onSave: (config: ApiConfiguration | Omit<ApiConfiguration, 'id'>) => void;
   onCancel: () => void;
+  availableModels?: ModelOption[];
 }
 
-const ApiConfigForm: React.FC<ApiConfigFormProps> = ({ config, onSave, onCancel }) => {
+const ApiConfigForm: React.FC<ApiConfigFormProps> = ({ config, onSave, onCancel, availableModels = [] }) => {
   const [formData, setFormData] = useState({
     name: config?.name || '',
     apiKey: config?.apiKey || '',
@@ -334,16 +525,20 @@ const ApiConfigForm: React.FC<ApiConfigFormProps> = ({ config, onSave, onCancel 
     isSelected: config?.isSelected || false
   });
 
-  // If the current modelId is not in TAB_CYCLE_MODELS, treat it as custom
+  // If the current modelId is not in available models, treat it as custom
   useEffect(() => {
-    if (config?.modelId && !TAB_CYCLE_MODELS.includes(config.modelId)) {
-      setFormData(prev => ({
-        ...prev,
-        modelId: 'custom',
-        customModelId: config.modelId
-      }));
+    if (config?.modelId) {
+      const isModelInList = availableModels.some(model => model.id === config.modelId) || 
+                           TAB_CYCLE_MODELS.includes(config.modelId);
+      if (!isModelInList) {
+        setFormData(prev => ({
+          ...prev,
+          modelId: 'custom',
+          customModelId: config.modelId
+        }));
+      }
     }
-  }, [config?.modelId]);
+  }, [config?.modelId, availableModels]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -374,7 +569,7 @@ const ApiConfigForm: React.FC<ApiConfigFormProps> = ({ config, onSave, onCancel 
     <div className="fixed inset-0 bg-black bg-opacity-75 z-60 flex items-center justify-center">
       <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
         <h3 className="text-lg font-semibold mb-4">
-          {config ? '编辑 API 配置' : '添加 API 配置'}
+          {config ? '编辑 API 配置' : '手动添加 API 配置'}
         </h3>
         
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -420,17 +615,35 @@ const ApiConfigForm: React.FC<ApiConfigFormProps> = ({ config, onSave, onCancel 
                 className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 appearance-none pr-8"
                 aria-label="选择 AI 模型"
               >
-                {TAB_CYCLE_MODELS.map((modelId) => {
-                  const name = modelId.includes('/') 
-                    ? `Gemini ${modelId.split('/')[1]}`.replace('gemini-','').replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-                    : `Gemini ${modelId.replace('gemini-','').replace(/-/g, ' ')}`.replace(/\b\w/g, l => l.toUpperCase());
-                  return (
-                    <option key={modelId} value={modelId}>
-                      {name}
-                    </option>
-                  );
-                })}
-                {/* Allow custom input by providing an "other" option and manual input */}
+                {/* 固定内置模型 */}
+                <optgroup label="内置模型">
+                  {TAB_CYCLE_MODELS.map((modelId) => {
+                    const name = modelId.includes('/') 
+                      ? `Gemini ${modelId.split('/')[1]}`.replace('gemini-','').replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+                      : `Gemini ${modelId.replace('gemini-','').replace(/-/g, ' ')}`.replace(/\b\w/g, l => l.toUpperCase());
+                    return (
+                      <option key={modelId} value={modelId}>
+                        {name}
+                      </option>
+                    );
+                  })}
+                </optgroup>
+                
+                {/* 可用模型 */}
+                {availableModels.length > 0 && (
+                  <optgroup label="可用模型">
+                    {availableModels
+                      .filter(model => !TAB_CYCLE_MODELS.includes(model.id))
+                      .map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.name}
+                        </option>
+                      ))
+                    }
+                  </optgroup>
+                )}
+                
+                {/* 自定义模型选项 */}
                 <option value="custom">自定义模型...</option>
               </select>
               <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">

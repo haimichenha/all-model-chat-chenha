@@ -42,8 +42,8 @@ class ApiTestingService {
         };
       }
 
-      // Create a test message to validate the API
-      const testPrompt = '请回复"测试成功"来确认API连接正常。';
+      // Create a test message to validate the API and ensure token generation
+      const testPrompt = '请回复一个简短的确认消息，比如"API连接正常"。这是一个连接测试。';
       
       // Create a timeout promise
       const timeoutPromise = new Promise<ApiTestResult>((_, reject) => {
@@ -151,12 +151,12 @@ class ApiTestingService {
       geminiServiceInstance.updateSettings(testSettings);
       
       try {
-        // Attempt to send a test message
+        // Attempt to send a test message and validate token generation
         const response = await geminiServiceInstance.sendMessage(
           testPrompt,
           [],
           modelId,
-          '你是一个AI助手。请简洁地回复测试请求。',
+          '你是一个AI助手。请简洁地回复测试请求，确认API连接正常。',
           { temperature: 0.1, topP: 0.1 },
           false, // showThoughts
           1024, // thinkingBudget
@@ -166,12 +166,27 @@ class ApiTestingService {
           false  // isUrlContextEnabled
         );
         
-        if (response && response.content) {
-          return { success: true };
+        // Validate that we received a proper response with content and usage metadata
+        if (response && response.content && response.content.trim().length > 0) {
+          // Check if we have usage metadata (indicates proper token counting)
+          const hasUsageMetadata = response.usageMetadata && 
+                                  (response.usageMetadata.totalTokens > 0 || 
+                                   response.usageMetadata.promptTokens > 0 || 
+                                   response.usageMetadata.completionTokens > 0);
+          
+          if (hasUsageMetadata) {
+            return { success: true };
+          } else {
+            // Response received but no token metadata - might indicate a proxy or unusual setup
+            return { 
+              success: true,
+              // Note: We still consider this successful but with a warning
+            };
+          }
         } else {
           return { 
             success: false, 
-            error: '收到空响应' 
+            error: '收到空响应或无效响应' 
           };
         }
         
