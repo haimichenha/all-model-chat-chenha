@@ -59,7 +59,7 @@ export const MessageContextMenu: React.FC<ContextMenuProps> = ({
 
   return (
     <div
-      className="fixed bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 min-w-[180px]"
+      className="fixed bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-[9999] min-w-[180px]"
       style={{ left: position.x, top: position.y }}
     >
       <div className="py-2">

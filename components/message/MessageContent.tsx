@@ -85,8 +85,15 @@ export const MessageContent: React.FC<MessageContentProps> = React.memo(({ messa
 
     // Handle right-click on content to show context menu (only for model messages)
     const handleContextMenu = (e: React.MouseEvent) => {
+        console.log('Right-click detected', {
+            role: message.role,
+            hasOnPipRequest: !!onPipRequest,
+            target: e.target
+        });
+        
         // Only show context menu for AI model responses
         if (message.role !== 'model' || !onPipRequest) {
+            console.log('Context menu blocked - role or onPipRequest missing');
             return;
         }
         
@@ -95,7 +102,10 @@ export const MessageContent: React.FC<MessageContentProps> = React.memo(({ messa
         const selection = window.getSelection();
         const selectedText = selection?.toString().trim() || '';
         
+        console.log('Selected text:', selectedText);
+        
         if (selectedText && selectedText.length > 0) {
+            console.log('Showing context menu for selected text');
             setContextMenu({
                 x: e.clientX,
                 y: e.clientY,
@@ -127,7 +137,9 @@ export const MessageContent: React.FC<MessageContentProps> = React.memo(({ messa
                     }
                     
                     const contextText = textContent.substring(start, end).trim();
+                    console.log('Context text from click:', contextText);
                     if (contextText.length > 0) {
+                        console.log('Showing context menu for context text');
                         setContextMenu({
                             x: e.clientX,
                             y: e.clientY,

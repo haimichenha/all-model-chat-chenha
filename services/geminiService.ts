@@ -28,7 +28,11 @@ class GeminiServiceImpl implements GeminiService {
     }
 
     private _isNewApiKey(apiKey: string): boolean {
-        return apiKey.startsWith('sk-') && apiKey.length > 20;
+        // NewAPI style keys typically start with 'sk-' but Google AI also has keys that start with 'sk-'
+        // Google AI keys starting with 'sk-' are usually much longer (around 51 chars)
+        // NewAPI keys are typically shorter
+        // For safety, let's be more specific: only treat as newapi if it's sk- AND relatively short (< 50 chars)
+        return apiKey.startsWith('sk-') && apiKey.length > 20 && apiKey.length < 50;
     }
 
     private _getApiClientOrThrow(apiKey?: string | null): GoogleGenAI {

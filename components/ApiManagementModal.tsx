@@ -4,17 +4,20 @@ import { apiTestingService, ApiConfiguration, ApiTestResult } from '../services/
 import { apiRotationService } from '../services/apiRotationService';
 import { logService } from '../services/logService';
 import { TAB_CYCLE_MODELS } from '../constants/appConstants';
+import { ModelOption } from '../types';
 
 interface ApiManagementModalProps {
   isOpen: boolean;
   onClose: () => void;
   t: (key: string) => string;
+  availableModels?: ModelOption[];
 }
 
 export const ApiManagementModal: React.FC<ApiManagementModalProps> = ({
   isOpen,
   onClose,
-  t
+  t,
+  availableModels = []
 }) => {
   const [apiConfigs, setApiConfigs] = useState<ApiConfiguration[]>([]);
   const [testResults, setTestResults] = useState<Map<string, ApiTestResult>>(new Map());
@@ -311,6 +314,7 @@ export const ApiManagementModal: React.FC<ApiManagementModalProps> = ({
             setShowAddForm(false);
             setEditingConfig(null);
           }}
+          availableModels={availableModels}
         />
       )}
     </div>
@@ -322,9 +326,10 @@ interface ApiConfigFormProps {
   config?: ApiConfiguration | null;
   onSave: (config: ApiConfiguration | Omit<ApiConfiguration, 'id'>) => void;
   onCancel: () => void;
+  availableModels?: ModelOption[];
 }
 
-const ApiConfigForm: React.FC<ApiConfigFormProps> = ({ config, onSave, onCancel }) => {
+const ApiConfigForm: React.FC<ApiConfigFormProps> = ({ config, onSave, onCancel, availableModels = [] }) => {
   const [formData, setFormData] = useState({
     name: config?.name || '',
     apiKey: config?.apiKey || '',
@@ -334,16 +339,20 @@ const ApiConfigForm: React.FC<ApiConfigFormProps> = ({ config, onSave, onCancel 
     isSelected: config?.isSelected || false
   });
 
-  // If the current modelId is not in TAB_CYCLE_MODELS, treat it as custom
+  // If the current modelId is not in available models, treat it as custom
   useEffect(() => {
-    if (config?.modelId && !TAB_CYCLE_MODELS.includes(config.modelId)) {
-      setFormData(prev => ({
-        ...prev,
-        modelId: 'custom',
-        customModelId: config.modelId
-      }));
+    if (config?.modelId) {
+      const isModelInList = availableModels.some(model => model.id === config.modelId) || 
+                           TAB_CYCLE_MODELS.includes(config.modelId);
+      if (!isModelInList) {
+        setFormData(prev => ({
+          ...prev,
+          modelId: 'custom',
+          customModelId: config.modelId
+        }));
+      }
     }
-  }, [config?.modelId]);
+  }, [config?.modelId, availableModels]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -420,17 +429,35 @@ const ApiConfigForm: React.FC<ApiConfigFormProps> = ({ config, onSave, onCancel 
                 className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 appearance-none pr-8"
                 aria-label="选择 AI 模型"
               >
-                {TAB_CYCLE_MODELS.map((modelId) => {
-                  const name = modelId.includes('/') 
-                    ? `Gemini ${modelId.split('/')[1]}`.replace('gemini-','').replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-                    : `Gemini ${modelId.replace('gemini-','').replace(/-/g, ' ')}`.replace(/\b\w/g, l => l.toUpperCase());
-                  return (
-                    <option key={modelId} value={modelId}>
-                      {name}
-                    </option>
-                  );
-                })}
-                {/* Allow custom input by providing an "other" option and manual input */}
+                {/* 固定内置模型 */}
+                <optgroup label="内置模型">
+                  {TAB_CYCLE_MODELS.map((modelId) => {
+                    const name = modelId.includes('/') 
+                      ? `Gemini ${modelId.split('/')[1]}`.replace('gemini-','').replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+                      : `Gemini ${modelId.replace('gemini-','').replace(/-/g, ' ')}`.replace(/\b\w/g, l => l.toUpperCase());
+                    return (
+                      <option key={modelId} value={modelId}>
+                        {name}
+                      </option>
+                    );
+                  })}
+                </optgroup>
+                
+                {/* 可用模型 */}
+                {availableModels.length > 0 && (
+                  <optgroup label="可用模型">
+                    {availableModels
+                      .filter(model => !TAB_CYCLE_MODELS.includes(model.id))
+                      .map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.name}
+                        </option>
+                      ))
+                    }
+                  </optgroup>
+                )}
+                
+                {/* 自定义模型选项 */}
                 <option value="custom">自定义模型...</option>
               </select>
               <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">

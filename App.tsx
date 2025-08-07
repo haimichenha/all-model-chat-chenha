@@ -496,6 +496,7 @@ const App: React.FC = () => {
               isOpen={isApiManagementModalOpen}
               onClose={() => setIsApiManagementModalOpen(false)}
               t={t}
+              availableModels={apiModels}
             />
           )}
         </>
@@ -578,29 +579,83 @@ const App: React.FC = () => {
 
       {/* Picture-in-Picture Window Content */}
       {isPipActive && pipContainer && createPortal(
-        <div className={`h-full bg-[var(--theme-bg-secondary)] text-[var(--theme-text-primary)] theme-${currentTheme.id}`}>
-          <MessageList
-            messages={messages}
-            messagesEndRef={messagesEndRef}
-            scrollContainerRef={scrollContainerRef}
-            onScrollContainerScroll={() => {}}
-            onEditMessage={handleEditMessage}
-            onDeleteMessage={handleDeleteMessage}
-            onRetryMessage={handleRetryMessage}
-            showThoughts={currentChatSettings.showThoughts}
-            themeColors={currentTheme.colors}
-            themeId={currentTheme.id}
-            baseFontSize={appSettings.baseFontSize}
-            expandCodeBlocksByDefault={appSettings.expandCodeBlocksByDefault}
-            onSuggestionClick={handleSuggestionClick}
-            onTextToSpeech={handleTextToSpeech}
-            ttsMessageId={ttsMessageId}
-            t={t}
-            language={language}
-            showScrollToBottom={false}
-            onScrollToBottom={() => {}}
-            onPipRequest={handlePipRequest}
-          />
+        <div className={`h-full bg-[var(--theme-bg-secondary)] text-[var(--theme-text-primary)] theme-${currentTheme.id} flex flex-col`}>
+          {/* Header */}
+          <div className="p-2 border-b border-[var(--theme-border-primary)] bg-[var(--theme-bg-primary)] flex-shrink-0">
+            <h2 className="text-sm font-medium text-[var(--theme-text-primary)]">
+              画中画模式 - {getCurrentModelDisplayName()}
+            </h2>
+          </div>
+          
+          {/* Messages Area */}
+          <div className="flex-grow overflow-hidden">
+            <MessageList
+              messages={messages}
+              messagesEndRef={messagesEndRef}
+              scrollContainerRef={scrollContainerRef}
+              onScrollContainerScroll={handleScroll}
+              onEditMessage={handleEditMessage}
+              onDeleteMessage={handleDeleteMessage}
+              onRetryMessage={handleRetryMessage}
+              showThoughts={currentChatSettings.showThoughts}
+              themeColors={currentTheme.colors}
+              themeId={currentTheme.id}
+              baseFontSize={appSettings.baseFontSize}
+              expandCodeBlocksByDefault={appSettings.expandCodeBlocksByDefault}
+              onSuggestionClick={handleSuggestionClick}
+              onTextToSpeech={handleTextToSpeech}
+              ttsMessageId={ttsMessageId}
+              t={t}
+              language={language}
+              showScrollToBottom={showScrollToBottom}
+              onScrollToBottom={scrollToBottom}
+              onPipRequest={handlePipRequest}
+            />
+          </div>
+          
+          {/* Input Area */}
+          <div className="flex-shrink-0">
+            <ChatInput
+              appSettings={appSettings}
+              commandedInput={commandedInput}
+              onMessageSent={() => setCommandedInput(null)}
+              selectedFiles={selectedFiles}
+              setSelectedFiles={setSelectedFiles}
+              onSendMessage={(text) => handleSendMessage({ text })}
+              isLoading={isLoading}
+              isEditing={!!editingMessageId}
+              onStopGenerating={handleStopGenerating}
+              onCancelEdit={handleCancelEdit}
+              onProcessFiles={handleProcessAndAddFiles}
+              onAddFileById={handleAddFileById}
+              onCancelUpload={handleCancelFileUpload}
+              isProcessingFile={isAppProcessingFile}
+              fileError={appFileError}
+              isImagenModel={isImagenModel}
+              aspectRatio={aspectRatio}
+              setAspectRatio={setAspectRatio}
+              t={t}
+              transcriptionModelId={appSettings.transcriptionModelId}
+              isTranscriptionThinkingEnabled={appSettings.isTranscriptionThinkingEnabled}
+              isGoogleSearchEnabled={!!currentChatSettings.isGoogleSearchEnabled}
+              onToggleGoogleSearch={toggleGoogleSearch}
+              isCodeExecutionEnabled={!!currentChatSettings.isCodeExecutionEnabled}
+              onToggleCodeExecution={toggleCodeExecution}
+              isUrlContextEnabled={!!currentChatSettings.isUrlContextEnabled}
+              onToggleUrlContext={toggleUrlContext}
+              onClearChat={() => handleClearCurrentChat()}
+              onNewChat={() => startNewChat()}
+              onOpenSettings={() => setIsSettingsModalOpen(true)}
+              onToggleCanvasPrompt={handleLoadCanvasHelperPromptAndSave}
+              availableModels={apiModels}
+              onSelectModel={(modelId) => setCurrentChatSettings(prev => ({ ...prev, model: modelId }))}
+              onTogglePinCurrentSession={() => activeSessionId && handleTogglePinSession(activeSessionId)}
+              onRetryLastTurn={() => {}}
+              onEditLastUserMessage={() => {}}
+              onAttachmentAction={() => {}}
+              setIsHelpModalOpen={() => {}}
+            />
+          </div>
         </div>,
         pipContainer
       )}
