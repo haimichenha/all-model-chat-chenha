@@ -3,6 +3,8 @@ import { AppSettings, ChatMessage, UploadedFile, ChatSettings as IndividualChatS
 import { generateUniqueId, buildContentParts, pcmBase64ToWavUrl, createChatHistoryForApi, getKeyForRequest, generateSessionTitle } from '../utils/appUtils';
 import { geminiServiceInstance } from '../services/geminiService';
 import { openaiService, OpenAIService } from '../services/openaiService';
+import { apiTestingService } from '../services/apiTestingService';
+import { persistentStoreService } from '../services/persistentStoreService';
 import { Chat, Part, UsageMetadata } from '@google/genai';
 import { logService } from '../services/logService';
 import { DEFAULT_CHAT_SETTINGS } from '../constants/appConstants';
@@ -143,16 +145,44 @@ export const useMessageHandler = ({
         }
 
         const hasFileId = filesToUse.some(f => f.fileUri);
-        const keyResult = getKeyForRequest(appSettings, sessionToUpdate);
-        if ('error' in keyResult) {
-            logService.error("Send message failed: API Key not configured.");
-             const errorMsg: ChatMessage = { id: generateUniqueId(), role: 'error', content: keyResult.error, timestamp: new Date() };
-             const newSession: SavedChatSession = { id: generateUniqueId(), title: "API Key Error", messages: [errorMsg], settings: { ...DEFAULT_CHAT_SETTINGS, ...appSettings }, timestamp: Date.now() };
-             updateAndPersistSessions(p => [newSession, ...p]);
-             setActiveSessionId(newSession.id);
-            return;
+        
+        // Check if API rotation is enabled and get the next key
+        let keyToUse: string | null = null;
+        let isNewKey = false;
+        let apiProxyUrl: string | null = null;
+        
+        try {
+            const rotationStatus = apiTestingService.getRotationStatus();
+            if (rotationStatus.isActive) {
+                // Get available API configs for rotation
+                const apiConfigs = persistentStoreService.getApiConfigs();
+                const nextConfig = apiTestingService.getNextAPIConfig(apiConfigs);
+                
+                if (nextConfig) {
+                    keyToUse = nextConfig.apiKey;
+                    isNewKey = true;
+                    apiProxyUrl = nextConfig.apiProxyUrl;
+                    logService.info(`Using API rotation: ${nextConfig.name} (${rotationStatus.rotationMode} mode)`);
+                }
+            }
+        } catch (error) {
+            logService.warn('API rotation failed, falling back to default key selection:', error);
         }
-        const { key: keyToUse, isNewKey } = keyResult;
+        
+        // Fall back to default key selection if rotation didn't provide a key
+        if (!keyToUse) {
+            const keyResult = getKeyForRequest(appSettings, sessionToUpdate);
+            if ('error' in keyResult) {
+                logService.error("Send message failed: API Key not configured.");
+                const errorMsg: ChatMessage = { id: generateUniqueId(), role: 'error', content: keyResult.error, timestamp: new Date() };
+                const newSession: SavedChatSession = { id: generateUniqueId(), title: "API Key Error", messages: [errorMsg], settings: { ...DEFAULT_CHAT_SETTINGS, ...appSettings }, timestamp: Date.now() };
+                updateAndPersistSessions(p => [newSession, ...p]);
+                setActiveSessionId(newSession.id);
+                return;
+            }
+            keyToUse = keyResult.key;
+            isNewKey = keyResult.isNewKey;
+        }
         const shouldLockKey = isNewKey && hasFileId;
 
         const newAbortController = new AbortController();
@@ -455,7 +485,8 @@ export const useMessageHandler = ({
                     {
                         temperature: sessionToUpdate.temperature,
                         top_p: sessionToUpdate.topP,
-                        max_tokens: 2000 // Default limit for safety
+                        max_tokens: 2000, // Default limit for safety
+                        baseUrl: apiProxyUrl || undefined // Use custom proxy URL if available
                     },
                     newAbortController.signal
                 );

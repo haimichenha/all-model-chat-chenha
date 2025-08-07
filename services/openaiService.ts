@@ -89,6 +89,7 @@ export class OpenAIService {
       temperature?: number;
       top_p?: number;
       max_tokens?: number;
+      baseUrl?: string; // Custom base URL for API proxy
     },
     signal?: AbortSignal
   ): Promise<{ content: string; usage?: any }> {
@@ -108,7 +109,11 @@ export class OpenAIService {
         maxTokens: options?.max_tokens
       });
 
-      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      // Use custom base URL if provided, otherwise use the default
+      const baseUrl = options?.baseUrl || this.baseUrl;
+      const apiUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+
+      const response = await fetch(`${apiUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
