@@ -44,6 +44,7 @@ const App: React.FC = () => {
       savedSessions,
       savedGroups,
       activeSessionId,
+      activeChat,
       apiModels,
       isModelsLoading,
       modelsLoadingError,
