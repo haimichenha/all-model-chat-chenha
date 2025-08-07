@@ -100,6 +100,10 @@ class PersistentStoreService {
     return [...this.store.apiConfigs];
   }
 
+  public getAllApiConfigs(): ApiConfig[] {
+    return [...this.store.apiConfigs];
+  }
+
   public getApiConfigById(id: string | null): ApiConfig | undefined {
     if (!id) return undefined;
     return this.store.apiConfigs.find(config => config.id === id);

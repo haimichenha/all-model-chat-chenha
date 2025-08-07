@@ -28,6 +28,67 @@ class ApiRotationService {
     healthCheckInterval: 5
   };
 
+  private readonly STORAGE_KEY = 'api-rotation-service-data';
+
+  constructor() {
+    this.loadFromStorage();
+  }
+
+  /**
+   * Load data from localStorage
+   */
+  private loadFromStorage(): void {
+    try {
+      const stored = localStorage.getItem(this.STORAGE_KEY);
+      if (stored) {
+        const data = JSON.parse(stored);
+        
+        // Load configurations
+        if (data.configurations) {
+          this.configurations.clear();
+          Object.entries(data.configurations).forEach(([id, config]) => {
+            this.configurations.set(id, config as ApiConfiguration);
+          });
+        }
+        
+        // Load settings
+        if (data.settings) {
+          this.settings = { ...this.settings, ...data.settings };
+        }
+        
+        // Initialize health status for loaded configurations
+        this.configurations.forEach((config, id) => {
+          if (!this.healthStatus.has(id)) {
+            this.healthStatus.set(id, {
+              id,
+              isHealthy: true,
+              lastChecked: Date.now(),
+              consecutiveFailures: 0
+            });
+          }
+        });
+      }
+    } catch (error) {
+      logService.error('Failed to load API rotation service data:', error);
+    }
+  }
+
+  /**
+   * Save data to localStorage
+   */
+  private saveToStorage(): void {
+    try {
+      const data = {
+        configurations: Object.fromEntries(this.configurations),
+        settings: this.settings,
+        timestamp: Date.now()
+      };
+      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(data));
+    } catch (error) {
+      logService.error('Failed to save API rotation service data:', error);
+    }
+  }
+
   /**
    * Add API configuration to rotation
    */
@@ -42,6 +103,7 @@ class ApiRotationService {
       consecutiveFailures: 0
     });
     
+    this.saveToStorage();
     logService.info(`Added API configuration: ${config.name} (${config.id})`);
   }
 
@@ -58,6 +120,7 @@ class ApiRotationService {
     }
     
     if (removed) {
+      this.saveToStorage();
       logService.info(`Removed API configuration: ${id}`);
     }
     
@@ -85,6 +148,7 @@ class ApiRotationService {
     const config = this.configurations.get(id);
     if (config) {
       config.isSelected = isSelected;
+      this.saveToStorage();
       logService.info(`Updated API selection: ${config.name} -> ${isSelected}`);
     }
   }
@@ -219,6 +283,7 @@ class ApiRotationService {
    */
   updateSettings(newSettings: Partial<ApiRotationSettings>): void {
     this.settings = { ...this.settings, ...newSettings };
+    this.saveToStorage();
     logService.info('API rotation settings updated', this.settings);
   }
 
