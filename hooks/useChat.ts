@@ -331,6 +331,7 @@ export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean 
         savedSessions,
         savedGroups: groupsHandler.savedGroups,
         activeSessionId,
+        activeChat,
         apiModels,
         isModelsLoading,
         modelsLoadingError,

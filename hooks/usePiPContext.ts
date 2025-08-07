@@ -15,7 +15,7 @@ interface PiPContextState {
 }
 
 export const usePiPContext = (
-  onSendMessage?: (text: string) => void,
+  onSendMessage?: (options: { text: string }) => void,
   onUpdateMessage?: (messageId: string, newContent: string) => void
 ) => {
   const [state, setState] = useState<PiPContextState>({
@@ -99,25 +99,23 @@ export const usePiPContext = (
     try {
       const explainPrompt = `请解释以下文本的含义和背景：\n\n"${selectedText}"`;
       
-      // For now, we'll simulate the response. In a real implementation,
-      // this would call the actual model API
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Send the explanation request through the real message system
+      // This will create a new message in the chat with the explanation
+      onSendMessage({ text: explainPrompt });
       
-      // This is a placeholder - in the actual implementation, you'd integrate with your message sending system
-      const mockExplanation = `对于选中的文本"${selectedText.substring(0, 100)}..."的解释：\n\n这是一个示例解释。在实际实现中，这里会显示模型生成的详细解释内容。`;
-      
+      // Set a placeholder content for the PiP window
       setState(prev => ({
         ...prev,
-        pipWindowContent: mockExplanation,
+        pipWindowContent: '正在生成对以下文本的解释：\n\n"' + selectedText.substring(0, 100) + (selectedText.length > 100 ? '...' : '') + '"\n\n请查看聊天记录中的回复。',
         isPipLoading: false
       }));
 
-      logService.info(`Explanation generated for selected text from message ${targetMessageId}`);
+      logService.info(`Explanation request sent for selected text from message ${targetMessageId}`);
     } catch (error) {
-      logService.error('Error generating explanation:', error);
+      logService.error('Error sending explanation request:', error);
       setState(prev => ({
         ...prev,
-        pipWindowContent: '抱歉，生成解释时出现错误。请重试。',
+        pipWindowContent: '抱歉，发送解释请求时出现错误。请重试。',
         isPipLoading: false
       }));
     }
@@ -141,24 +139,22 @@ export const usePiPContext = (
     try {
       const regeneratePrompt = `请针对以下内容重新生成一个更好的回答：\n\n"${selectedText}"`;
       
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Send the regeneration request through the real message system
+      onSendMessage({ text: regeneratePrompt });
       
-      // This is a placeholder - in the actual implementation, you'd integrate with your message generation system
-      const mockRegeneration = `重新生成的回答：\n\n这是对"${selectedText.substring(0, 50)}..."的重新生成内容。在实际实现中，这里会显示模型生成的新回答，可以替换原来的内容。`;
-      
+      // Set a placeholder content for the PiP window
       setState(prev => ({
         ...prev,
-        pipWindowContent: mockRegeneration,
+        pipWindowContent: '正在重新生成对以下内容的回答：\n\n"' + selectedText.substring(0, 100) + (selectedText.length > 100 ? '...' : '') + '"\n\n请查看聊天记录中的新回复。',
         isPipLoading: false
       }));
 
-      logService.info(`Regeneration completed for selected text from message ${targetMessageId}`);
+      logService.info(`Regeneration request sent for selected text from message ${targetMessageId}`);
     } catch (error) {
-      logService.error('Error regenerating content:', error);
+      logService.error('Error sending regeneration request:', error);
       setState(prev => ({
         ...prev,
-        pipWindowContent: '抱歉，重新生成内容时出现错误。请重试。',
+        pipWindowContent: '抱歉，发送重新生成请求时出现错误。请重试。',
         isPipLoading: false
       }));
     }
@@ -169,16 +165,10 @@ export const usePiPContext = (
     const { pipWindowContent, targetMessageId, contextAction } = state;
     if (!pipWindowContent || !targetMessageId) return;
 
-    if (contextAction === 'explain') {
-      // For explanations, we might want to send a new message or append to current
-      if (onSendMessage) {
-        onSendMessage(pipWindowContent);
-      }
-    } else if (contextAction === 'regenerate' && onUpdateMessage) {
-      // For regenerations, update the target message
-      onUpdateMessage(targetMessageId, pipWindowContent);
-    }
-
+    // Since we're now sending requests directly through the message system,
+    // the "Add" button can be used to close the PiP window and indicate satisfaction
+    // with the response that appeared in the chat
+    
     setState(prev => ({
       ...prev,
       isPiPWindowOpen: false,
@@ -186,8 +176,8 @@ export const usePiPContext = (
       contextAction: null
     }));
 
-    logService.info(`PiP content added for message ${targetMessageId} with action ${contextAction}`);
-  }, [state, onSendMessage, onUpdateMessage]);
+    logService.info(`PiP window closed for message ${targetMessageId} with action ${contextAction}`);
+  }, [state]);
 
   // Handle canceling the PiP window
   const handleCancelPiP = useCallback(() => {

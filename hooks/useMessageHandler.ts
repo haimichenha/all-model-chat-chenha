@@ -2,6 +2,7 @@ import { useCallback, Dispatch, SetStateAction, useRef } from 'react';
 import { AppSettings, ChatMessage, UploadedFile, ChatSettings as IndividualChatSettings, ChatHistoryItem, SavedChatSession } from '../types';
 import { generateUniqueId, buildContentParts, pcmBase64ToWavUrl, createChatHistoryForApi, getKeyForRequest, generateSessionTitle } from '../utils/appUtils';
 import { geminiServiceInstance } from '../services/geminiService';
+import { openaiService, OpenAIService } from '../services/openaiService';
 import { Chat, Part, UsageMetadata } from '@google/genai';
 import { logService } from '../services/logService';
 import { DEFAULT_CHAT_SETTINGS } from '../constants/appConstants';
@@ -438,21 +439,77 @@ export const useMessageHandler = ({
             }));
         };
 
-        if (appSettings.isStreamingEnabled) {
-            await geminiServiceInstance.sendMessageStream(keyToUse, activeModelId, fullHistory, sessionToUpdate.systemInstruction, { temperature: sessionToUpdate.temperature, topP: sessionToUpdate.topP }, sessionToUpdate.showThoughts, sessionToUpdate.thinkingBudget, !!sessionToUpdate.isGoogleSearchEnabled, !!sessionToUpdate.isCodeExecutionEnabled, !!sessionToUpdate.isUrlContextEnabled, newAbortController.signal, streamOnPart, onThoughtChunk, streamOnError, streamOnComplete);
-        } else { 
-            await geminiServiceInstance.sendMessageNonStream(keyToUse, activeModelId, fullHistory, sessionToUpdate.systemInstruction, { temperature: sessionToUpdate.temperature, topP: sessionToUpdate.topP }, sessionToUpdate.showThoughts, sessionToUpdate.thinkingBudget, !!sessionToUpdate.isGoogleSearchEnabled, !!sessionToUpdate.isCodeExecutionEnabled, !!sessionToUpdate.isUrlContextEnabled, newAbortController.signal,
-                streamOnError,
-                (parts: Part[], thoughtsText?: string, usageMetadata?: UsageMetadata, groundingMetadata?: any) => {
-                    for(const part of parts) {
-                        streamOnPart(part);
+        // Check if this is a NewAPI key and route accordingly
+        const isNewAPIKey = OpenAIService.isNewAPIKey(keyToUse);
+        
+        if (isNewAPIKey) {
+            // Handle NewAPI (OpenAI-compatible) requests
+            logService.info(`Using OpenAI service for NewAPI key: ${keyToUse.substring(0, 10)}...`);
+            
+            try {
+                const result = await openaiService.sendMessage(
+                    keyToUse,
+                    activeModelId,
+                    fullHistory.map(h => h.message),
+                    sessionToUpdate.systemInstruction,
+                    {
+                        temperature: sessionToUpdate.temperature,
+                        top_p: sessionToUpdate.topP,
+                        max_tokens: 2000 // Default limit for safety
+                    },
+                    newAbortController.signal
+                );
+                
+                // Simulate streaming behavior for consistency
+                const content = result.content;
+                const parts = [{ text: content }] as Part[];
+                
+                // Stream the content character by character for consistent UX
+                for (let i = 0; i <= content.length; i += 50) {
+                    if (newAbortController.signal.aborted) break;
+                    
+                    const chunk = content.substring(0, i);
+                    if (chunk) {
+                        streamOnPart({ text: chunk });
                     }
-                    if(thoughtsText) {
-                        onThoughtChunk(thoughtsText);
+                    
+                    // Add small delay to simulate streaming
+                    if (i < content.length) {
+                        await new Promise(resolve => setTimeout(resolve, 50));
                     }
-                    streamOnComplete(usageMetadata, groundingMetadata);
                 }
-            );
+                
+                // Complete the stream
+                const mockUsage = {
+                    promptTokens: result.usage?.prompt_tokens || 0,
+                    completionTokens: result.usage?.completion_tokens || 0,
+                    totalTokens: result.usage?.total_tokens || 0
+                } as UsageMetadata;
+                
+                streamOnComplete(mockUsage, null);
+                
+            } catch (error) {
+                logService.error('OpenAI service error:', error);
+                streamOnError(error as Error);
+            }
+        } else {
+            // Handle regular Gemini API requests
+            if (appSettings.isStreamingEnabled) {
+                await geminiServiceInstance.sendMessageStream(keyToUse, activeModelId, fullHistory, sessionToUpdate.systemInstruction, { temperature: sessionToUpdate.temperature, topP: sessionToUpdate.topP }, sessionToUpdate.showThoughts, sessionToUpdate.thinkingBudget, !!sessionToUpdate.isGoogleSearchEnabled, !!sessionToUpdate.isCodeExecutionEnabled, !!sessionToUpdate.isUrlContextEnabled, newAbortController.signal, streamOnPart, onThoughtChunk, streamOnError, streamOnComplete);
+            } else { 
+                await geminiServiceInstance.sendMessageNonStream(keyToUse, activeModelId, fullHistory, sessionToUpdate.systemInstruction, { temperature: sessionToUpdate.temperature, topP: sessionToUpdate.topP }, sessionToUpdate.showThoughts, sessionToUpdate.thinkingBudget, !!sessionToUpdate.isGoogleSearchEnabled, !!sessionToUpdate.isCodeExecutionEnabled, !!sessionToUpdate.isUrlContextEnabled, newAbortController.signal,
+                    streamOnError,
+                    (parts: Part[], thoughtsText?: string, usageMetadata?: UsageMetadata, groundingMetadata?: any) => {
+                        for(const part of parts) {
+                            streamOnPart(part);
+                        }
+                        if(thoughtsText) {
+                            onThoughtChunk(thoughtsText);
+                        }
+                        streamOnComplete(usageMetadata, groundingMetadata);
+                    }
+                );
+            }
         }
     }, [activeSessionId, selectedFiles, editingMessageId, appSettings, setAppFileError, setSelectedFiles, setEditingMessageId, setActiveSessionId, userScrolledUp, updateAndPersistSessions, setLoadingSessionIds, activeJobs, aspectRatio, handleApiError]);
 
