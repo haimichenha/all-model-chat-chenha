@@ -114,6 +114,7 @@ const App: React.FC = () => {
   const [pipOriginalText, setPipOriginalText] = useState('');
   const [pipResponse, setPipResponse] = useState<string>('');
   const [pipLoading, setPipLoading] = useState(false);
+  const [pipGenerationInProgress, setPipGenerationInProgress] = useState(false);
   // 仍通过右键选中触发
   
   const handleSaveSettings = (newSettings: AppSettings) => {
@@ -218,27 +219,39 @@ const App: React.FC = () => {
   const runPipGeneration = useCallback(async (mode: 'explain' | 'reanswer', selectedText: string) => {
     console.log('runPipGeneration called:', { mode, selectedText });
     
-    // 守卫：确保关键配置已就绪，避免未就绪时访问属性导致崩溃
-    if (!appSettings || !currentChatSettings) {
-      console.error('PiP generation aborted: settings not ready.');
-      logService.error('PiP generation aborted: settings not ready.');
-      setPipResponse(language === 'zh' ? '应用配置尚未加载完毕，请稍后再试。' : 'App settings are not ready. Please try again.');
-      setPipLoading(false);
-      return;
-    }
-    if (!selectedText.trim()) {
-      console.log('Empty selectedText, aborting');
+    // Prevent multiple simultaneous generations
+    if (pipGenerationInProgress) {
+      console.log('PiP generation already in progress, skipping');
       return;
     }
     
-    console.log('Starting PiP generation...');
+    // Ensure clean state at start
+    setPipGenerationInProgress(true);
     setPipLoading(true);
     setPipResponse('');
     
-    const abort = new AbortController();
-    let isRequestComplete = false;
-    
     try {
+      // 守卫：确保关键配置已就绪，避免未就绪时访问属性导致崩溃
+      if (!appSettings || !currentChatSettings || !isServiceInitialized) {
+        console.error('PiP generation aborted: settings or service not ready.');
+        logService.error('PiP generation aborted: settings or service not ready.');
+        setPipResponse(language === 'zh' ? '应用配置尚未加载完毕，请稍后再试。' : 'App settings are not ready. Please try again.');
+        setPipLoading(false);
+        return;
+      }
+      
+      if (!selectedText.trim()) {
+        console.log('Empty selectedText, aborting');
+        setPipResponse(language === 'zh' ? '未选择有效文本。' : 'No valid text selected.');
+        setPipLoading(false);
+        return;
+      }
+      
+      console.log('Starting PiP generation...');
+      
+      const abort = new AbortController();
+      let isRequestComplete = false;
+      
       // Build a concise instruction based on mode
       const userPrompt = mode === 'explain'
         ? (language === 'zh' ? `请用简洁清晰的语言解释以下选中内容：\n\n${selectedText}` : `Explain the following selected text clearly and concisely:\n\n${selectedText}`)
@@ -250,15 +263,18 @@ const App: React.FC = () => {
       // 选择与主对话一致的有效 API Key（支持 lockedApiKey/多Key池）
       const keyResult = getKeyForRequest(appSettings, currentChatSettings);
       if ('error' in keyResult) {
+        console.error('No valid API key found');
         setPipResponse(language === 'zh' ? '未配置可用的 API Key，请在设置中填写后重试。' : 'No usable API key configured. Please set it in Settings.');
         setPipLoading(false);
         return;
       }
+      
       const apiKey = keyResult.key;
       const modelId = currentChatSettings.modelId || appSettings.modelId;
       const systemInstruction = currentChatSettings.systemInstruction || appSettings.systemInstruction;
       const temperature = currentChatSettings.temperature;
       const topP = currentChatSettings.topP;
+      
       if (!modelId) {
         console.error('No model selected');
         setPipResponse(language === 'zh' ? '尚未选择可用模型，请在顶部选择模型后重试。' : 'No model selected. Please choose a model and try again.');
@@ -283,6 +299,7 @@ const App: React.FC = () => {
             !!currentChatSettings.isUrlContextEnabled,
             abort.signal,
             (err) => {
+              console.error('PiP API error:', err);
               logService.error('PiP API error:', err);
               reject(err);
             },
@@ -304,31 +321,53 @@ const App: React.FC = () => {
             }
           );
         } catch (syncError) {
+          console.error('PiP sync error:', syncError);
           logService.error('PiP sync error:', syncError);
           reject(syncError);
         }
       });
     } catch (e) {
+      console.error('PiP generation failed:', e);
       logService.error('PiP generation failed:', e);
-      if (!abort.signal.aborted && !isRequestComplete) {
-        setPipResponse(language === 'zh' ? '生成失败，请稍后重试（查看控制台了解详情）。' : 'Generation failed. Please try again (see console).');
+      if (!pipGenerationInProgress) {
+        // Only update if we're still processing this generation
+        return;
       }
+      setPipResponse(language === 'zh' ? '生成失败，请稍后重试（查看控制台了解详情）。' : 'Generation failed. Please try again (see console).');
     } finally {
-      if (!abort.signal.aborted) {
-        setPipLoading(false);
-      }
-      // 注意：不要在这里调用 abort.abort()，因为请求可能还在进行中
+      // Always ensure loading and progress states are cleared
+      setPipLoading(false);
+      setPipGenerationInProgress(false);
     }
-  }, [appSettings, currentChatSettings, language]);
+  }, [appSettings, currentChatSettings, language, isServiceInitialized, pipGenerationInProgress]);
 
 
   const handlePipRequest = useCallback((mode: 'explain' | 'reanswer', selectedText: string) => {
     console.log('PiP Request:', { mode, selectedText, visible: pipVisible });
-    setPipMode(mode);
-    setPipOriginalText(selectedText);
-    setPipVisible(true);
-    runPipGeneration(mode, selectedText);
-  }, [runPipGeneration, pipVisible]);
+    
+    try {
+      // Reset any previous state
+      setPipMode(mode);
+      setPipOriginalText(selectedText);
+      setPipLoading(false);
+      setPipResponse('');
+      setPipVisible(true);
+      
+      // Start generation with a small delay to ensure UI state is updated
+      setTimeout(() => {
+        runPipGeneration(mode, selectedText).catch(error => {
+          console.error('PiP generation failed:', error);
+          setPipLoading(false);
+          setPipResponse(language === 'zh' ? '生成失败，请重试。' : 'Generation failed. Please try again.');
+        });
+      }, 50);
+    } catch (error) {
+      console.error('Error in handlePipRequest:', error);
+      // Ensure we don't leave the UI in a broken state
+      setPipVisible(false);
+      setPipLoading(false);
+    }
+  }, [runPipGeneration, pipVisible, language]);
 
   const handlePipAddToChat = useCallback((response: string) => {
     if (!response?.trim()) { setPipVisible(false); return; }
@@ -338,10 +377,20 @@ const App: React.FC = () => {
 
   const handlePipCancel = useCallback(() => {
     setPipVisible(false);
+    // Reset state to prevent stuck loading states
+    setPipLoading(false);
+    setPipResponse('');
+    setPipOriginalText('');
+    setPipGenerationInProgress(false);
   }, []);
 
   const handlePipClose = useCallback(() => {
     setPipVisible(false);
+    // Reset state to prevent stuck loading states  
+    setPipLoading(false);
+    setPipResponse('');
+    setPipOriginalText('');
+    setPipGenerationInProgress(false);
   }, []);
 
   const handlePipFollowUp = useCallback((follow: string) => {

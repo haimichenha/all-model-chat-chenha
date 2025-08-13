@@ -1,0 +1,34 @@
+/* Placeholder index.css to prevent 404 errors */
+/* Main styles are defined in index.html inline styles */
+
+/* Ensure fallback styles are available immediately */
+:root {
+  --theme-bg-primary: #111827;
+  --theme-bg-secondary: #1f2937;
+  --theme-text-primary: #f3f4f6;
+}
+
+/* Basic fallback styling for immediate display */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--theme-bg-primary, #111827);
+  color: var(--theme-text-primary, #f3f4f6);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* Prevent flash of unstyled content */
+body {
+  visibility: visible;
+}
+
+/* Loading state */
+.app-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background-color: var(--theme-bg-primary, #111827);
+  color: var(--theme-text-primary, #f3f4f6);
+}
