@@ -9,6 +9,7 @@ import { useMessageHandler } from './useMessageHandler';
 import { useChatGroups } from './useChatGroups';
 import { applyImageCachePolicy, generateUniqueId, logService } from '../utils/appUtils';
 import { CHAT_HISTORY_SESSIONS_KEY } from '../constants/appConstants';
+import { hybridStorageService } from '../services/hybridStorageService';
 
 export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean = false) => {
     // 1. Core application state, now managed centrally in the main hook
@@ -30,6 +31,7 @@ export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean 
     const [aspectRatio, setAspectRatio] = useState<string>('1:1');
     const [ttsMessageId, setTtsMessageId] = useState<string | null>(null);
     const [isSwitchingModel, setIsSwitchingModel] = useState<boolean>(false);
+    const [storageQuotaError, setStorageQuotaError] = useState<boolean>(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const userScrolledUp = useRef<boolean>(false);
@@ -65,10 +67,33 @@ export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean 
             }
 
             // --- 如果保存失败，启动自动清理逻辑 ---
-            alert('浏览器存储空间已满。为保存最新记录，将自动清理最旧的、未固定的聊天会话。');
-            
-            let prunedSessions = [...newSessions];
+            // 设置存储配额错误状态，让UI显示存储配额模态框
+            setStorageQuotaError(true);
+            // 先返回新状态，不自动清理，让用户选择
+            return newSessions;
+        });
+    }, []);
+
+    // 手动清理存储空间的函数
+    const handleStorageCleanup = useCallback(() => {
+        setSavedSessions(prevSessions => {
+            let prunedSessions = [...prevSessions];
             let prunedCount = 0;
+
+            const attemptToSave = (sessionsToSave: SavedChatSession[]): boolean => {
+                try {
+                    const sessionsForStorage = applyImageCachePolicy(sessionsToSave);
+                    localStorage.setItem(CHAT_HISTORY_SESSIONS_KEY, JSON.stringify(sessionsForStorage));
+                    logService.info(`Successfully saved ${sessionsToSave.length} sessions to localStorage.`);
+                    return true;
+                } catch (error: any) {
+                    if (error.name === 'QuotaExceededError' || (error.message && error.message.toLowerCase().includes('quota'))) {
+                        return false;
+                    }
+                    logService.error('Failed to save sessions to localStorage due to an unexpected error:', error);
+                    return true; 
+                }
+            };
 
             // 循环清理，直到保存成功
             while (!attemptToSave(prunedSessions)) {
@@ -82,8 +107,7 @@ export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean 
                     // 如果所有会话都已被固定，但空间仍然不足
                     logService.error('Pruning failed: No more non-pinned sessions to remove, but quota is still exceeded.');
                     alert('自动清理失败：所有会话均已固定，无法腾出足够空间。请手动导出并清理聊天记录以防数据丢失。');
-                    // 即使无法保存，也要在内存中返回最新的状态，避免丢失当前操作
-                    return newSessions;
+                    break;
                 }
                 
                 const sessionToRemove = sorted[indexToRemove];
@@ -94,9 +118,13 @@ export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean 
             
             if (prunedCount > 0) {
                 logService.info(`Successfully pruned ${prunedCount} session(s) and saved the history.`);
+                alert(`已自动清理 ${prunedCount} 个最旧的聊天会话，为新内容腾出空间。`);
             }
             
-            return prunedSessions; // 返回清理后的会话列表
+            // 关闭存储配额错误模态框
+            setStorageQuotaError(false);
+            
+            return prunedSessions;
         });
     }, []);
 
@@ -414,6 +442,11 @@ export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean 
         toggleGoogleSearch,
         toggleCodeExecution,
         toggleUrlContext,
+        
+        // Storage quota management
+        storageQuotaError,
+        setStorageQuotaError,
+        handleStorageCleanup,
 
         handleExportAllSessions,
     };

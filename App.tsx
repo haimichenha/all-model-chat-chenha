@@ -14,6 +14,7 @@ import { logService } from './services/logService';
 import { SettingsModal } from './components/SettingsModal';
 import { LogViewer } from './components/LogViewer';
 import { PreloadedMessagesModal } from './components/PreloadedMessagesModal';
+import { StorageQuotaModal } from './components/modals/StorageQuotaModal';
 import { geminiServiceInstance } from './services/geminiService';
 
 const App: React.FC = () => {
@@ -89,6 +90,11 @@ const App: React.FC = () => {
       toggleGoogleSearch,
       toggleCodeExecution,
       toggleUrlContext,
+      
+      // Storage quota management
+      storageQuotaError,
+      setStorageQuotaError,
+      handleStorageCleanup,
 
       handleExportAllSessions,
   } = useChat(appSettings, isServiceInitialized);
@@ -379,6 +385,14 @@ const App: React.FC = () => {
               onImportScenario={handleImportPreloadedScenario}
               onExportScenario={handleExportPreloadedScenario}
               t={t}
+            />
+          )}
+          {storageQuotaError && (
+            <StorageQuotaModal
+              isOpen={storageQuotaError}
+              onClose={() => setStorageQuotaError(false)}
+              onProceedWithCleanup={handleStorageCleanup}
+              currentSystemInstruction={currentChatSettings.systemInstruction}
             />
           )}
         </>
