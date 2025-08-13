@@ -15,7 +15,9 @@ import { SettingsModal } from './components/SettingsModal';
 import { LogViewer } from './components/LogViewer';
 import { PreloadedMessagesModal } from './components/PreloadedMessagesModal';
 import { StorageQuotaModal } from './components/modals/StorageQuotaModal';
+import { ContextualExplanationPopup } from './components/contextual/ContextualExplanationPopup';
 import { geminiServiceInstance } from './services/geminiService';
+import { useContextualExplanation } from './hooks/useContextualExplanation';
 
 const App: React.FC = () => {
   const { appSettings, setAppSettings, currentTheme, language } = useAppSettings();
@@ -111,6 +113,17 @@ const App: React.FC = () => {
   const [isPreloadedMessagesModalOpen, setIsPreloadedMessagesModalOpen] = useState<boolean>(false);
   const [isHistorySidebarOpen, setIsHistorySidebarOpen] = useState<boolean>(window.innerWidth >= 768);
   const [isLogViewerOpen, setIsLogViewerOpen] = useState<boolean>(false);
+  
+  // Contextual explanation functionality
+  const {
+    isPopupOpen: isContextualPopupOpen,
+    selectedText: contextualSelectedText,
+    popupPosition: contextualPopupPosition,
+    closePopup: closeContextualPopup
+  } = useContextualExplanation({
+    minTextLength: 10,
+    enabledElements: ['.message-content', '.prose', '[data-message-content]']
+  });
   
   const handleSaveSettings = (newSettings: AppSettings) => {
     // Save the new settings as the global default for subsequent new chats
@@ -218,7 +231,29 @@ const App: React.FC = () => {
     }, 0);
   };
 
+  // Contextual explanation handlers
+  const handleContextualAddToChat = useCallback((explanation: string) => {
+    // Add the explanation as a new user message in the chat
+    setCommandedInput({ 
+      text: `请解释这段内容：\n\n${explanation}`, 
+      id: Date.now() 
+    });
+    
+    // Focus the input textarea after adding
+    setTimeout(() => {
+      const textarea = document.querySelector('textarea[aria-label="Chat message input"]') as HTMLTextAreaElement;
+      if (textarea) textarea.focus();
+    }, 100);
+  }, [setCommandedInput]);
 
+  const handleContextualRegenerate = useCallback((newText: string) => {
+    // This could be used to replace selected text in message editing
+    // For now, we'll add it as a suggestion
+    setCommandedInput({ 
+      text: `请根据以下建议改进文本：\n\n${newText}`, 
+      id: Date.now() 
+    });
+  }, [setCommandedInput]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -392,6 +427,16 @@ const App: React.FC = () => {
               isOpen={storageQuotaError}
               onClose={() => setStorageQuotaError(false)}
               onProceedWithCleanup={handleStorageCleanup}
+              currentSystemInstruction={currentChatSettings.systemInstruction}
+            />
+          )}
+          {isContextualPopupOpen && contextualPopupPosition && (
+            <ContextualExplanationPopup
+              selectedText={contextualSelectedText}
+              position={contextualPopupPosition}
+              onClose={closeContextualPopup}
+              onAddToChat={handleContextualAddToChat}
+              onRegenerate={handleContextualRegenerate}
               currentSystemInstruction={currentChatSettings.systemInstruction}
             />
           )}
