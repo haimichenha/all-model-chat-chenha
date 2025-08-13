@@ -9,13 +9,15 @@ import { ChatInput } from './components/ChatInput';
 import { HistorySidebar } from './components/HistorySidebar';
 import { useAppSettings } from './hooks/useAppSettings';
 import { useChat } from './hooks/useChat';
-import { getTranslator, getResponsiveValue } from './utils/appUtils';
+import { getTranslator, getResponsiveValue, getKeyForRequest } from './utils/appUtils';
 import { logService } from './services/logService';
 import { SettingsModal } from './components/SettingsModal';
 import { LogViewer } from './components/LogViewer';
 import { PreloadedMessagesModal } from './components/PreloadedMessagesModal';
-
 import { geminiServiceInstance } from './services/geminiService';
+import { PipDialog } from './components/PipDialog';
+import { Part } from '@google/genai';
+
 const App: React.FC = () => {
   const { appSettings, setAppSettings, currentTheme, language } = useAppSettings();
   const t = getTranslator(language);
@@ -88,8 +90,10 @@ const App: React.FC = () => {
       scrollToBottom,
       toggleGoogleSearch,
       toggleCodeExecution,
+      toggleUrlContext,
 
-      handleExportAllSessions,
+  handleExportAllSessions,
+  appendModelMessage,
   } = useChat(appSettings, isServiceInitialized);
 
   // [修改] 2. 在注入设置成功后，将信号灯变为绿色
@@ -104,7 +108,14 @@ const App: React.FC = () => {
   const [isPreloadedMessagesModalOpen, setIsPreloadedMessagesModalOpen] = useState<boolean>(false);
   const [isHistorySidebarOpen, setIsHistorySidebarOpen] = useState<boolean>(window.innerWidth >= 768);
   const [isLogViewerOpen, setIsLogViewerOpen] = useState<boolean>(false);
-
+  // PiP state
+  const [pipVisible, setPipVisible] = useState(false);
+  const [pipMode, setPipMode] = useState<'explain' | 'reanswer'>('explain');
+  const [pipOriginalText, setPipOriginalText] = useState('');
+  const [pipResponse, setPipResponse] = useState<string>('');
+  const [pipLoading, setPipLoading] = useState(false);
+  // 仍通过右键选中触发
+  
   const handleSaveSettings = (newSettings: AppSettings) => {
     // Save the new settings as the global default for subsequent new chats
     setAppSettings(newSettings);
@@ -203,6 +214,187 @@ const App: React.FC = () => {
     }
   };
   
+  // Generate content for PiP dialog using current chat settings and rotation-enabled service
+  const runPipGeneration = useCallback(async (mode: 'explain' | 'reanswer', selectedText: string) => {
+    console.log('runPipGeneration called:', { mode, selectedText });
+    
+    // 守卫：确保关键配置已就绪，避免未就绪时访问属性导致崩溃
+    if (!appSettings || !currentChatSettings) {
+      console.error('PiP generation aborted: settings not ready.');
+      logService.error('PiP generation aborted: settings not ready.');
+      setPipResponse(language === 'zh' ? '应用配置尚未加载完毕，请稍后再试。' : 'App settings are not ready. Please try again.');
+      setPipLoading(false);
+      return;
+    }
+    if (!selectedText.trim()) {
+      console.log('Empty selectedText, aborting');
+      return;
+    }
+    
+    console.log('Starting PiP generation...');
+    setPipLoading(true);
+    setPipResponse('');
+    
+    const abort = new AbortController();
+    let isRequestComplete = false;
+    
+    try {
+      // Build a concise instruction based on mode
+      const userPrompt = mode === 'explain'
+        ? (language === 'zh' ? `请用简洁清晰的语言解释以下选中内容：\n\n${selectedText}` : `Explain the following selected text clearly and concisely:\n\n${selectedText}`)
+        : (language === 'zh' ? `请基于以下选中内容，重新组织更好的回答：\n\n${selectedText}` : `Re-answer and improve the response based on the selected text:\n\n${selectedText}`);
+
+      const history = [{ role: 'user' as const, parts: [{ text: userPrompt }] }];
+      
+      // 关键字段兜底校验
+      // 选择与主对话一致的有效 API Key（支持 lockedApiKey/多Key池）
+      const keyResult = getKeyForRequest(appSettings, currentChatSettings);
+      if ('error' in keyResult) {
+        setPipResponse(language === 'zh' ? '未配置可用的 API Key，请在设置中填写后重试。' : 'No usable API key configured. Please set it in Settings.');
+        setPipLoading(false);
+        return;
+      }
+      const apiKey = keyResult.key;
+      const modelId = currentChatSettings.modelId || appSettings.modelId;
+      const systemInstruction = currentChatSettings.systemInstruction || appSettings.systemInstruction;
+      const temperature = currentChatSettings.temperature;
+      const topP = currentChatSettings.topP;
+      if (!modelId) {
+        console.error('No model selected');
+        setPipResponse(language === 'zh' ? '尚未选择可用模型，请在顶部选择模型后重试。' : 'No model selected. Please choose a model and try again.');
+        setPipLoading(false);
+        return;
+      }
+
+      console.log('About to call sendMessageNonStream with:', { apiKey: apiKey.substring(0, 10) + '...', modelId });
+
+      await new Promise<void>((resolve, reject) => {
+        try {
+          geminiServiceInstance.sendMessageNonStream(
+            apiKey,
+            modelId,
+            history,
+            systemInstruction,
+            { temperature, topP },
+            false,
+            currentChatSettings.thinkingBudget || appSettings.thinkingBudget,
+            !!currentChatSettings.isGoogleSearchEnabled,
+            !!currentChatSettings.isCodeExecutionEnabled,
+            !!currentChatSettings.isUrlContextEnabled,
+            abort.signal,
+            (err) => {
+              logService.error('PiP API error:', err);
+              reject(err);
+            },
+            (parts: Part[]) => {
+              try {
+                console.log('Received response parts:', parts);
+                const text = parts.map(p => p.text || '').join('');
+                console.log('Generated text:', text.substring(0, 100) + '...');
+                isRequestComplete = true;
+                if (!abort.signal.aborted) {
+                  setPipResponse(text);
+                }
+                resolve();
+              } catch (processingError) {
+                console.error('PiP response processing error:', processingError);
+                logService.error('PiP response processing error:', processingError);
+                reject(processingError);
+              }
+            }
+          );
+        } catch (syncError) {
+          logService.error('PiP sync error:', syncError);
+          reject(syncError);
+        }
+      });
+    } catch (e) {
+      logService.error('PiP generation failed:', e);
+      if (!abort.signal.aborted && !isRequestComplete) {
+        setPipResponse(language === 'zh' ? '生成失败，请稍后重试（查看控制台了解详情）。' : 'Generation failed. Please try again (see console).');
+      }
+    } finally {
+      if (!abort.signal.aborted) {
+        setPipLoading(false);
+      }
+      // 注意：不要在这里调用 abort.abort()，因为请求可能还在进行中
+    }
+  }, [appSettings, currentChatSettings, language]);
+
+
+  const handlePipRequest = useCallback((mode: 'explain' | 'reanswer', selectedText: string) => {
+    console.log('PiP Request:', { mode, selectedText, visible: pipVisible });
+    setPipMode(mode);
+    setPipOriginalText(selectedText);
+    setPipVisible(true);
+    runPipGeneration(mode, selectedText);
+  }, [runPipGeneration, pipVisible]);
+
+  const handlePipAddToChat = useCallback((response: string) => {
+    if (!response?.trim()) { setPipVisible(false); return; }
+    appendModelMessage(response);
+    setPipVisible(false);
+  }, [appendModelMessage]);
+
+  const handlePipCancel = useCallback(() => {
+    setPipVisible(false);
+  }, []);
+
+  const handlePipClose = useCallback(() => {
+    setPipVisible(false);
+  }, []);
+
+  const handlePipFollowUp = useCallback((follow: string) => {
+    if (!follow.trim()) return;
+    runPipGeneration('reanswer', `${pipOriginalText}\n\n追问: ${follow}`);
+  }, [pipOriginalText, runPipGeneration]);
+
+  // Provide TTS for PiP content, return audio blob URL
+  const handlePipTts = useCallback(async (text: string): Promise<string | null> => {
+    try {
+      // 与主对话一致的有效 Key
+      if (!currentChatSettings) return null;
+      const keyResult = getKeyForRequest(appSettings, currentChatSettings);
+      if ('error' in keyResult) return null;
+      const key = keyResult.key;
+      const modelId = 'models/gemini-2.5-flash-preview-tts';
+      const voice = appSettings.ttsVoice;
+      const abort = new AbortController();
+      const base64Pcm = await geminiServiceInstance.generateSpeech(key, modelId, text, voice, abort.signal);
+      // Convert to WAV URL (reuse util inside hook isn’t exported here; inline a tiny converter)
+      const pcm = atob(base64Pcm);
+      const pcmBuffer = new Uint8Array(pcm.length);
+      for (let i = 0; i < pcm.length; i++) pcmBuffer[i] = pcm.charCodeAt(i);
+      // Simple WAV header for 16-bit PCM mono 22.05kHz (service default); fallback
+      const sampleRate = 22050; const numChannels = 1; const bitsPerSample = 16;
+      const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
+      const blockAlign = (numChannels * bitsPerSample) / 8;
+      const dataSize = pcmBuffer.byteLength;
+      const buffer = new ArrayBuffer(44 + dataSize);
+      const view = new DataView(buffer);
+      const writeString = (offset: number, str: string) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
+      writeString(0, 'RIFF');
+      view.setUint32(4, 36 + dataSize, true);
+      writeString(8, 'WAVE');
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, numChannels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, byteRate, true);
+      view.setUint16(32, blockAlign, true);
+      view.setUint16(34, bitsPerSample, true);
+      writeString(36, 'data');
+      view.setUint32(40, dataSize, true);
+      new Uint8Array(buffer, 44).set(pcmBuffer);
+      const blob = new Blob([buffer], { type: 'audio/wav' });
+      return URL.createObjectURL(blob);
+    } catch (e) {
+      console.error('PIP TTS failed', e);
+      return null;
+    }
+  }, [appSettings, currentChatSettings]);
+  
   const handleSuggestionClick = (text: string) => {
     setCommandedInput({ text: text + '\n', id: Date.now() });
     setTimeout(() => {
@@ -210,6 +402,8 @@ const App: React.FC = () => {
         if (textarea) textarea.focus();
     }, 0);
   };
+
+
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -319,7 +513,7 @@ const App: React.FC = () => {
              <p className="text-sm text-[var(--theme-text-primary)] opacity-80 mt-2">{t('appDragDropHelpText')}</p>
           </div>
         )}
-        <Header
+  <Header
           onNewChat={() => startNewChat()}
           onOpenSettingsModal={() => setIsSettingsModalOpen(true)}
           onOpenScenariosModal={() => setIsPreloadedMessagesModalOpen(true)}
@@ -399,6 +593,7 @@ const App: React.FC = () => {
           language={language}
           showScrollToBottom={showScrollToBottom}
           onScrollToBottom={scrollToBottom}
+          onPipRequest={handlePipRequest}
         />
         <ChatInput
           appSettings={appSettings}
@@ -427,20 +622,51 @@ const App: React.FC = () => {
           isCodeExecutionEnabled={!!currentChatSettings.isCodeExecutionEnabled}
           onToggleCodeExecution={toggleCodeExecution}
           isUrlContextEnabled={!!currentChatSettings.isUrlContextEnabled}
-          onToggleUrlContext={() => {}}
+          onToggleUrlContext={toggleUrlContext}
           onClearChat={() => handleClearCurrentChat()}
           onNewChat={() => startNewChat()}
           onOpenSettings={() => setIsSettingsModalOpen(true)}
           onToggleCanvasPrompt={handleLoadCanvasHelperPromptAndSave}
           availableModels={apiModels}
-          onSelectModel={(modelId) => setCurrentChatSettings(prev => ({ ...prev, model: modelId }))}
+          onSelectModel={(modelId) => setCurrentChatSettings(prev => ({ ...prev, modelId }))}
           onTogglePinCurrentSession={() => activeSessionId && handleTogglePinSession(activeSessionId)}
           onRetryLastTurn={() => {}}
           onEditLastUserMessage={() => {}}
           onAttachmentAction={() => {}}
           setIsHelpModalOpen={() => {}}
+          latestModelMessage={(() => {
+            for (let i = messages.length - 1; i >= 0; i--) {
+              if (messages[i].role === 'model') return messages[i];
+            }
+            return null;
+          })()}
         />
       </div>
+      {/* PiP mini dialog */}
+      <PipDialog
+        isVisible={pipVisible}
+        originalText={pipOriginalText}
+        requestType={pipMode}
+        response={pipResponse}
+        isLoading={pipLoading}
+        onConfirm={handlePipAddToChat}
+        onCancel={handlePipCancel}
+        onClose={handlePipClose}
+        onSendFollowUp={handlePipFollowUp}
+        onRequestTts={handlePipTts}
+        onOpenHtmlPreview={(html, options) => {
+          // forward to MessageList’s HTML preview modal by temporary bridge
+          // Using a global custom event to avoid ref drilling
+          window.dispatchEvent(new CustomEvent('open-html-preview', { detail: { html, options } }));
+        }}
+        onInsertToInput={(text) => {
+          setCommandedInput({ text, id: Date.now() });
+          setTimeout(() => {
+            const textarea = document.querySelector('textarea[aria-label="Chat message input"]') as HTMLTextAreaElement;
+            if (textarea) textarea.focus();
+          }, 0);
+        }}
+      />
     </div>
   );
 };

@@ -1,8 +1,7 @@
-import React, { useState, useCallback, useRef } from 'react';
-import { ChatMessage, MessageListProps, UploadedFile, ThemeColors } from '../types';
+import React, { useState, useCallback, useEffect } from 'react';
+import { ChatMessage, MessageListProps, UploadedFile } from '../types';
 import { Message } from './message/Message';
-import { X, Bot, Zap, ArrowUp, ArrowDown } from 'lucide-react';
-import { translations, getResponsiveValue } from '../utils/appUtils';
+import { Zap, ArrowUp, ArrowDown } from 'lucide-react';
 import { HtmlPreviewModal } from './HtmlPreviewModal';
 import { ImageZoomModal } from './shared/ImageZoomModal';
 
@@ -16,8 +15,8 @@ const SUGGESTIONS_KEYS = [
 export const MessageList: React.FC<MessageListProps> = ({ 
     messages, messagesEndRef, scrollContainerRef, onScrollContainerScroll, 
     onEditMessage, onDeleteMessage, onRetryMessage, showThoughts, themeColors, baseFontSize,
-    expandCodeBlocksByDefault, onSuggestionClick, onTextToSpeech, ttsMessageId, t, language, themeId,
-    showScrollToBottom, onScrollToBottom
+  expandCodeBlocksByDefault, onSuggestionClick, onTextToSpeech, ttsMessageId, t, themeId,
+  showScrollToBottom, onScrollToBottom, onPipRequest
 }) => {
   const [zoomedFile, setZoomedFile] = useState<UploadedFile | null>(null);
   
@@ -46,6 +45,19 @@ export const MessageList: React.FC<MessageListProps> = ({
     setIsHtmlPreviewModalOpen(false);
     setHtmlToPreview(null);
     setInitialTrueFullscreenRequest(false);
+  }, []);
+
+  // Bridge: allow other components (PiP) to open HTML preview without prop drilling
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { html: string; options?: { initialTrueFullscreen?: boolean } };
+      if (!detail || !detail.html) return;
+      setHtmlToPreview(detail.html);
+      setInitialTrueFullscreenRequest(!!detail.options?.initialTrueFullscreen);
+      setIsHtmlPreviewModalOpen(true);
+    };
+    window.addEventListener('open-html-preview', handler as EventListener);
+    return () => window.removeEventListener('open-html-preview', handler as EventListener);
   }, []);
 
   return (
@@ -108,6 +120,7 @@ export const MessageList: React.FC<MessageListProps> = ({
               onTextToSpeech={onTextToSpeech}
               ttsMessageId={ttsMessageId}
               t={t}
+              onPipRequest={onPipRequest}
             />
           ))}
         </div>
