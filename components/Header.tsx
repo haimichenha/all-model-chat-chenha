@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { Settings, ChevronDown, Check, Loader2, Trash2, Pin, MessagesSquare, Menu, FilePlus2, Wand2, Lock, FileText } from 'lucide-react'; 
+import { Settings, ChevronDown, Check, Loader2, Trash2, Pin, MessagesSquare, Menu, FilePlus2, Wand2, Lock, FileText, PictureInPicture } from 'lucide-react'; 
 import { ModelOption } from '../types';
 import { translations, getResponsiveValue } from '../utils/appUtils';
 
@@ -19,6 +19,10 @@ interface HeaderProps {
   isHistorySidebarOpen: boolean;
   onLoadCanvasPrompt: () => void;
   isCanvasPromptActive: boolean; // New prop for canvas prompt status
+  // 画中画功能
+  isPictureInPictureSupported?: boolean;
+  isPictureInPictureActive?: boolean;
+  onTogglePictureInPicture?: () => void;
   t: (key: keyof typeof translations) => string;
   isKeyLocked: boolean;
   defaultModelId?: string;
@@ -44,6 +48,10 @@ export const Header: React.FC<HeaderProps> = ({
   isHistorySidebarOpen,
   onLoadCanvasPrompt,
   isCanvasPromptActive, // Destructure new prop
+  // 画中画功能
+  isPictureInPictureSupported = false,
+  isPictureInPictureActive = false,
+  onTogglePictureInPicture,
   t,
   isKeyLocked,
 }) => {
@@ -226,6 +234,23 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <FileText size={getResponsiveValue(16, 18)} />
         </button>
+        
+        {/* 画中画按钮 */}
+        {isPictureInPictureSupported && onTogglePictureInPicture && (
+          <button
+            onClick={onTogglePictureInPicture}
+            className={`p-2 sm:p-2.5 rounded-lg shadow transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[var(--theme-bg-primary)] focus:ring-[var(--theme-border-focus)] flex items-center justify-center hover:scale-105 active:scale-100 ${
+              isPictureInPictureActive 
+                ? 'bg-[var(--theme-bg-accent)] hover:bg-[var(--theme-bg-accent-hover)] text-[var(--theme-icon-clear-chat)]' 
+                : 'bg-[var(--theme-bg-tertiary)] hover:bg-[var(--theme-bg-input)] text-[var(--theme-icon-settings)]'
+            }`}
+            aria-label="切换画中画模式"
+            title={isPictureInPictureActive ? "退出画中画模式" : "进入画中画模式"}
+          >
+            <PictureInPicture size={getResponsiveValue(16, 18)} />
+          </button>
+        )}
+        
         <button
           onClick={onOpenSettingsModal} 
           className="p-2 sm:p-2.5 bg-[var(--theme-bg-tertiary)] hover:bg-[var(--theme-bg-input)] text-[var(--theme-icon-settings)] rounded-lg shadow transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[var(--theme-bg-primary)] focus:ring-[var(--theme-border-focus)] flex items-center justify-center hover:scale-105 active:scale-100"

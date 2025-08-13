@@ -15,12 +15,12 @@ export const DataImportExport: React.FC<DataImportExportProps> = ({ onImportSucc
   const fileInputRef = useRef<HTMLInputElement>(null);
   const apiConfigFileInputRef = useRef<HTMLInputElement>(null);
   const systemPromptsFileInputRef = useRef<HTMLInputElement>(null);
-  const buttonIconSize = getResponsiveValue(12, 14);
+  const buttonIconSize = getResponsiveValue(10, 12);
 
   // 避免未使用变量警告
   void refreshTrigger;
 
-  const baseButtonClass = "px-3 sm:px-4 py-2 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[var(--theme-bg-secondary)] flex items-center justify-center gap-2 text-sm font-medium w-full sm:w-auto";
+  const baseButtonClass = "px-2 py-1 rounded transition-colors focus:outline-none focus:ring-1 focus:ring-offset-1 focus:ring-offset-[var(--theme-bg-secondary)] flex items-center justify-center gap-1 text-xs font-medium w-full sm:w-auto";
   
   const handleExportSettings = () => {
     persistentStoreService.exportToJSON('all-model-chat-settings', currentSystemInstruction);
