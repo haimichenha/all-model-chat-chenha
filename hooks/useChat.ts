@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef, useState, useMemo } from 'react';
-import { AppSettings, ChatMessage, ChatSettings as IndividualChatSettings, SavedChatSession, UploadedFile, ChatGroup } from '../types';
+import { AppSettings, ChatMessage, ChatSettings as IndividualChatSettings, SavedChatSession, UploadedFile } from '../types';
 import { DEFAULT_CHAT_SETTINGS } from '../constants/appConstants';
 import { useModels } from './useModels';
 import { useChatHistory } from './useChatHistory';
@@ -9,6 +9,7 @@ import { useMessageHandler } from './useMessageHandler';
 import { useChatGroups } from './useChatGroups';
 import { applyImageCachePolicy, generateUniqueId, logService } from '../utils/appUtils';
 import { CHAT_HISTORY_SESSIONS_KEY } from '../constants/appConstants';
+import { firebaseStorageService } from '../services/firebaseStorageService';
 
 export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean = false) => {
     // 1. Core application state, now managed centrally in the main hook
@@ -34,6 +35,42 @@ export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean 
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const userScrolledUp = useRef<boolean>(false);
     const [showScrollToBottom, setShowScrollToBottom] = useState<boolean>(false);
+
+    // 统一的导出实现，供内部复用（放在前面，供下面逻辑调用）
+    const exportAllSessions = (sessions: SavedChatSession[]) => {
+        logService.info(`Exporting ${sessions.length} chat sessions to a text file.`);
+
+        const fileContent = sessions
+            .sort((a, b) => a.timestamp - b.timestamp)
+            .map(session => {
+                const sessionHeader = `==================================================\n# 聊天会话: ${session.title}\n# 会话 ID: ${session.id}\n# 创建时间: ${new Date(session.timestamp).toLocaleString()}\n# 系统指令: ${session.settings.systemInstruction || '(无)'}\n# 模型设置: ${session.settings.modelId} (温度: ${session.settings.temperature}, Top-P: ${session.settings.topP})\n==================================================\n\n`;
+
+                const messagesContent = session.messages
+                    .map(message => {
+                        const messageHeader = `----------\n[${message.role === 'user' ? '用户' : '模型'} - ${new Date(message.timestamp).toLocaleString()}]\n----------\n`;
+                        const filesContent = message.files && message.files.length > 0
+                            ? `\n[附加文件: ${message.files.map(f => f.name).join(', ')}]\n`
+                            : '';
+                        return `${messageHeader}${message.content}${filesContent}\n`;
+                    })
+                    .join('\n');
+
+                return sessionHeader + messagesContent;
+            })
+            .join('\n\n\n');
+
+        const blob = new Blob([fileContent], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const timestamp = new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-');
+        a.download = `all-model-chat-history_${timestamp}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        logService.info('Successfully triggered download for all sessions.');
+    };
 
     // [核心优化] 实现了智能存储和自动清理功能的全新 updateAndPersistSessions 函数
     const updateAndPersistSessions = useCallback((updater: (prev: SavedChatSession[]) => SavedChatSession[]) => {
@@ -65,7 +102,29 @@ export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean 
             }
 
             // --- 如果保存失败，启动自动清理逻辑 ---
-            alert('浏览器存储空间已满。为保存最新记录，将自动清理最旧的、未固定的聊天会话。');
+            const action = window.confirm('浏览器存储空间已满。\n\n您可以：\n- 选择“确定”自动清理最旧的未固定会话以继续保存；\n- 选择“取消”先导出全部聊天记录为TXT以防丢失。\n\n是否立即自动清理？');
+
+            if (!action) {
+                // 用户选择先导出
+                try {
+                    exportAllSessions(newSessions);
+                } catch (e) {
+                    logService.error('导出失败：', e);
+                    alert('导出失败，请稍后重试。');
+                }
+                // 同时尝试云备份（若可用，不阻塞且失败静默）
+                (async () => {
+                    try {
+                        const persistentStore = (() => {
+                            try { return JSON.parse(localStorage.getItem('all-model-chat-persistent-store') || '{}'); } catch { return {}; }
+                        })() as any;
+                        await firebaseStorageService.backupToFirebase(newSessions, persistentStore);
+                    } catch (err) {
+                        logService.warn('Firebase 备份失败或不可用：', err);
+                    }
+                })();
+                return newSessions; // 不强制清理，保持当前内存状态，避免进一步写入
+            }
             
             let prunedSessions = [...newSessions];
             let prunedCount = 0;
@@ -82,6 +141,7 @@ export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean 
                     // 如果所有会话都已被固定，但空间仍然不足
                     logService.error('Pruning failed: No more non-pinned sessions to remove, but quota is still exceeded.');
                     alert('自动清理失败：所有会话均已固定，无法腾出足够空间。请手动导出并清理聊天记录以防数据丢失。');
+                    try { exportAllSessions(prunedSessions); } catch {}
                     // 即使无法保存，也要在内存中返回最新的状态，避免丢失当前操作
                     return newSessions;
                 }
@@ -177,50 +237,12 @@ export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean 
     const scenarioHandler = usePreloadedScenarios({ startNewChat: historyHandler.startNewChat, updateAndPersistSessions });
 
     const handleExportAllSessions = useCallback(() => {
-        alert('即将执行真正的下载代码！'); 
         if (savedSessions.length === 0) {
             logService.info('No chat sessions to export.');
             alert('没有可导出的聊天记录。'); // 给用户一个直接的反馈
             return;
         }
-
-        logService.info(`Exporting ${savedSessions.length} chat sessions to a text file.`);
-
-        const fileContent = savedSessions
-            .sort((a, b) => a.timestamp - b.timestamp) // 按时间从旧到新排序
-            .map(session => {
-                const sessionHeader = `==================================================\n# 聊天会话: ${session.title}\n# 会话 ID: ${session.id}\n# 创建时间: ${new Date(session.timestamp).toLocaleString()}\n# 系统指令: ${session.settings.systemInstruction || '(无)'}\n# 模型设置: ${session.settings.modelId} (温度: ${session.settings.temperature}, Top-P: ${session.settings.topP})\n==================================================\n\n`;
-
-                const messagesContent = session.messages
-                    .map(message => {
-                        const messageHeader = `----------\n[${message.role === 'user' ? '用户' : '模型'} - ${new Date(message.timestamp).toLocaleString()}]\n----------\n`;
-                        const filesContent = message.files && message.files.length > 0
-                            ? `\n[附加文件: ${message.files.map(f => f.name).join(', ')}]\n`
-                            : '';
-                        return `${messageHeader}${message.content}${filesContent}\n`;
-                    })
-                    .join('\n');
-
-                return sessionHeader + messagesContent;
-            })
-            .join('\n\n\n');
-
-        try {
-            const blob = new Blob([fileContent], { type: 'text/plain;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            const timestamp = new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-');
-            a.download = `all-model-chat-history_${timestamp}.txt`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            logService.info('Successfully triggered download for all sessions.');
-        } catch (error) {
-            logService.error('Failed to create and download the export file.', error);
-            alert('创建导出文件失败，请查看控制台日志获取详情。');
-        }
+        exportAllSessions(savedSessions);
     }, [savedSessions]);
     
     // Initial data loading from history
@@ -327,6 +349,23 @@ export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean 
             isGoogleSearchEnabled: !prev.isGoogleSearchEnabled,
         }));
     }, [activeSessionId, isLoading, setCurrentChatSettings, messageHandler]);
+
+        // Append a model message to the end of current active chat (used by PiP Add-to-chat)
+        const appendModelMessage = useCallback((content: string) => {
+            if (!content?.trim()) return;
+            if (!activeSessionId) {
+                // If no session yet, start one first
+                historyHandler.startNewChat();
+                return;
+            }
+            const newMessage: ChatMessage = {
+                id: generateUniqueId(),
+                role: 'model',
+                content: content,
+                timestamp: new Date(),
+            } as ChatMessage;
+            updateAndPersistSessions(prev => prev.map(s => s.id === activeSessionId ? { ...s, messages: [...s.messages, newMessage] } : s));
+        }, [activeSessionId, updateAndPersistSessions, historyHandler]);
     
     const toggleCodeExecution = useCallback(() => {
         if (!activeSessionId) return;
@@ -416,5 +455,6 @@ export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean 
         toggleUrlContext,
 
         handleExportAllSessions,
+    appendModelMessage,
     };
 };

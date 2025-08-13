@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import html2canvas from 'html2canvas';
@@ -6,7 +6,9 @@ import hljs from 'highlight.js';
 import { User, Bot, AlertTriangle, Edit3, Trash2, RotateCw, ClipboardCopy, Check, Loader2, AlertCircle, ImageIcon, FileCode2, Volume2 } from 'lucide-react';
 import { ChatMessage, UploadedFile, ThemeColors } from '../../types';
 import { MessageContent } from './MessageContent';
+import { MessageContextMenu } from '../MessageContextMenu';
 import { translations, getResponsiveValue } from '../../utils/appUtils';
+// Removed custom right-click PiP context menu to restore native behavior
 
 const generateFullHtmlDocument = (contentHtml: string, themeColors: ThemeColors, messageId: string, themeId: string): string => {
   let headContent = '';
@@ -222,10 +224,16 @@ interface MessageProps {
     onTextToSpeech: (messageId: string, text: string) => void;
     ttsMessageId: string | null;
     t: (key: keyof typeof translations) => string;
+  onPipRequest?: (mode: 'explain' | 'reanswer', selectedText: string, originMessage: ChatMessage) => void;
 }
 
 export const Message: React.FC<MessageProps> = React.memo((props) => {
-    const { message, prevMessage, messageIndex, onEditMessage, onDeleteMessage, onRetryMessage, onImageClick, onOpenHtmlPreview, showThoughts, themeColors, themeId, baseFontSize, expandCodeBlocksByDefault, t, onTextToSpeech, ttsMessageId } = props;
+  const { message, prevMessage, messageIndex, onEditMessage, onDeleteMessage, onRetryMessage, onImageClick, onOpenHtmlPreview, showThoughts, themeColors, themeId, baseFontSize, expandCodeBlocksByDefault, t, onTextToSpeech, ttsMessageId, onPipRequest } = props;
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; text: string; visible: boolean }>({ x: 0, y: 0, text: '', visible: false });
+  // 保存选区以便在交互时恢复，避免点击菜单清空选区
+  const savedRangeRef = useRef<Range | null>(null);
+  const isInteractingMenuRef = useRef(false);
     
     const isGrouped = prevMessage &&
         prevMessage.role === message.role &&
@@ -282,9 +290,94 @@ export const Message: React.FC<MessageProps> = React.memo((props) => {
         </div>
     );
 
+    const handleContextMenu = (e: React.MouseEvent) => {
+      if (!onPipRequest) return; // 未接线则不拦截
+      // 允许在用户或模型消息上选中文本后触发 PiP
+      const sel = window.getSelection?.();
+      const selectedText = sel ? sel.toString().trim() : '';
+      if (!selectedText) return; // 未选择文本，走系统菜单
+      e.preventDefault();
+      e.stopPropagation();
+
+      // 优先使用选区的矩形定位菜单，使其“贴着选中文本”出现
+      let x = e.clientX;
+      let y = e.clientY;
+      try {
+        if (sel && sel.rangeCount > 0) {
+          const range = sel.getRangeAt(0);
+          // 保存选区供后续恢复
+          savedRangeRef.current = range.cloneRange();
+          const rects = range.getClientRects();
+          const rect = rects.length > 0 ? rects[rects.length - 1] : range.getBoundingClientRect();
+          if (rect && rect.width >= 0 && rect.height >= 0) {
+            // 基于选区矩形的中点定位，减少偏移
+            const cx = rect.left + rect.width / 2;
+            x = Math.max(8, cx);
+            y = Math.min(window.innerHeight - 8, rect.bottom + 8);
+          }
+        }
+      } catch {
+        // 回退到鼠标位置
+      }
+
+  setContextMenu({ x, y, text: selectedText, visible: true });
+    };
+
+    // 当菜单可见时，跟随选区的位置更新定位；若选区被清除则关闭菜单
+    useEffect(() => {
+      if (!contextMenu.visible) return;
+      // 菜单出现后，异步恢复选区，避免点击菜单清空
+      setTimeout(() => {
+        try {
+          const sel = window.getSelection?.();
+          if (sel && savedRangeRef.current) {
+            sel.removeAllRanges();
+            sel.addRange(savedRangeRef.current);
+          }
+        } catch {}
+      }, 0);
+      const updatePosition = () => {
+        const sel = window.getSelection?.();
+        const text = sel ? sel.toString().trim() : '';
+        // 若正在与菜单交互，不因选区变化而关闭
+        if (!text && !isInteractingMenuRef.current) {
+          setContextMenu(prev => ({ ...prev, visible: false }));
+          return;
+        }
+        try {
+          if (sel && sel.rangeCount > 0) {
+            const range = sel.getRangeAt(0);
+            const rects = range.getClientRects();
+            const rect = rects.length > 0 ? rects[rects.length - 1] : range.getBoundingClientRect();
+            if (rect) {
+              const cx = rect.left + rect.width / 2;
+              const x = Math.max(8, cx);
+              const y = Math.min(window.innerHeight - 8, rect.bottom + 8);
+              setContextMenu(prev => ({ ...prev, x, y, text: text || prev.text }));
+            }
+          }
+        } catch {
+          // ignore
+        }
+      };
+      // 监听窗口变化与滚动以及选区变更
+      window.addEventListener('resize', updatePosition);
+      window.addEventListener('scroll', updatePosition, true);
+      document.addEventListener('selectionchange', updatePosition);
+      // 初次更新一次
+      updatePosition();
+      return () => {
+        window.removeEventListener('resize', updatePosition);
+        window.removeEventListener('scroll', updatePosition, true);
+        document.removeEventListener('selectionchange', updatePosition);
+      };
+    }, [contextMenu.visible]);
+
     return (
-        <div 
-            className={`${messageContainerClasses} message-container-animate`} 
+    <div 
+      ref={containerRef}
+      onContextMenu={handleContextMenu}
+      className={`${messageContainerClasses} message-container-animate`} 
             data-message-id={message.id} 
             style={{ animationDelay: `${Math.min(messageIndex * 80, 800)}ms` }}
         >
@@ -301,6 +394,22 @@ export const Message: React.FC<MessageProps> = React.memo((props) => {
                 />
             </div>
             {message.role === 'user' && iconAndActions}
+            {/* Selection context menu for PiP */}
+            {onPipRequest && (
+              <MessageContextMenu
+                x={contextMenu.x}
+                y={contextMenu.y}
+                selectedText={contextMenu.text}
+                isVisible={contextMenu.visible}
+                onClose={() => setContextMenu(prev => ({ ...prev, visible: false }))}
+                onExplain={(text: string) => onPipRequest('explain', text, message)}
+                onReAnswer={(text: string) => onPipRequest('reanswer', text, message)}
+                onInteractStart={() => { isInteractingMenuRef.current = true; /* 再次恢复选区以防清空 */
+                  try { const sel = window.getSelection?.(); if (sel && savedRangeRef.current) { sel.removeAllRanges(); sel.addRange(savedRangeRef.current); } } catch {}
+                }}
+                onInteractEnd={() => { isInteractingMenuRef.current = false; }}
+              />
+            )}
         </div>
     );
 });

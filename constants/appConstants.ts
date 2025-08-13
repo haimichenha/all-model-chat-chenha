@@ -329,4 +329,19 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   isTranscriptionThinkingEnabled: DEFAULT_TRANSCRIPTION_THINKING_ENABLED,
   useFilesApiForImages: false,
   expandCodeBlocksByDefault: false,
+  // 新增功能开关默认设置
+  isAutoTitleEnabled: false,
+    isSuggestionsEnabled: true,
+  isMermaidRenderingEnabled: false,
+  isGraphvizRenderingEnabled: false,
+  isCompletionNotificationEnabled: false,
+    // API 轮询默认
+    apiRotation: {
+        enabled: false,
+        mode: 'round-robin',
+        enableFailover: true,
+        maxRetries: 3,
+        healthCheckInterval: 5,
+        selectedConfigIds: [],
+    },
 };

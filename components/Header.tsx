@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { Settings, ChevronDown, Check, Loader2, Trash2, Pin, MessagesSquare, Menu, FilePlus2, Wand2, Lock, FileText } from 'lucide-react'; 
+import { Settings, ChevronDown, Check, Loader2, Pin, MessagesSquare, Menu, FilePlus2, Wand2, Lock, FileText } from 'lucide-react'; 
 import { ModelOption } from '../types';
 import { translations, getResponsiveValue } from '../utils/appUtils';
 
@@ -26,7 +26,7 @@ interface HeaderProps {
   themeId?: string;
 }
 
-const MOBILE_BREAKPOINT = 640; // Tailwind's sm breakpoint
+//
 
 export const Header: React.FC<HeaderProps> = ({
   onNewChat,
@@ -46,6 +46,7 @@ export const Header: React.FC<HeaderProps> = ({
   isCanvasPromptActive, // Destructure new prop
   t,
   isKeyLocked,
+  
 }) => {
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
   const modelSelectorRef = useRef<HTMLDivElement>(null);
@@ -201,6 +202,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
       <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
+  {/* PiP 按钮已移除；PiP 通过右键菜单触发 */}
         <button
           onClick={onLoadCanvasPrompt}
           disabled={isLoading}

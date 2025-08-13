@@ -192,23 +192,23 @@ export const HistorySidebar: React.FC<HistorySidebarProps> = ({
           <span>{t('headerNewChat')}</span>
         </button>
 
-        <div className="flex gap-2">
+        <div className="flex gap-1">
           <button 
             onClick={onExportAllSessions}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-[var(--theme-text-secondary)] font-medium bg-[var(--theme-bg-primary)] border border-[var(--theme-border-secondary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-border-focus)] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--theme-border-focus)] shadow-sm transition-all flex-1" 
+            className="flex items-center gap-1 px-2 py-1 text-xs text-[var(--theme-text-secondary)] font-medium bg-[var(--theme-bg-primary)] border border-[var(--theme-border-secondary)] rounded-md hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-border-focus)] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--theme-border-focus)] shadow-sm transition-all flex-1" 
             aria-label="导出所有聊天记录"
           >         
-            <Download size={16} />
-            <span className="text-xs">导出</span>
+            <Download size={12} />
+            <span>导出</span>
           </button>
 
           <button 
             onClick={onImportSessions}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-[var(--theme-text-secondary)] font-medium bg-[var(--theme-bg-primary)] border border-[var(--theme-border-secondary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-border-focus)] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--theme-border-focus)] shadow-sm transition-all flex-1" 
+            className="flex items-center gap-1 px-2 py-1 text-xs text-[var(--theme-text-secondary)] font-medium bg-[var(--theme-bg-primary)] border border-[var(--theme-border-secondary)] rounded-md hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-border-focus)] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--theme-border-focus)] shadow-sm transition-all flex-1" 
             aria-label="导入聊天记录"
           >         
-            <Upload size={16} />
-            <span className="text-xs">导入</span>
+            <Upload size={12} />
+            <span>导入</span>
           </button>
         </div>
 
