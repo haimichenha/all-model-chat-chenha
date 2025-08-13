@@ -170,10 +170,6 @@ export const PipDialog: React.FC<PipDialogProps> = ({
     return () => window.removeEventListener('keydown', keyHandler);
   }, [isVisible, response, isLoading, onClose, onConfirm]);
 
-  if (!isVisible) return null;
-
-  const title = requestType === 'explain' ? '内容解释' : '重新回答';
-
   const sanitizedHtml = useMemo(() => {
     if (!response) return '';
     try {
@@ -183,6 +179,10 @@ export const PipDialog: React.FC<PipDialogProps> = ({
       return '';
     }
   }, [response]);
+
+  if (!isVisible) return null;
+
+  const title = requestType === 'explain' ? '内容解释' : '重新回答';
 
   const handleCopy = async () => {
     if (!response) return;
