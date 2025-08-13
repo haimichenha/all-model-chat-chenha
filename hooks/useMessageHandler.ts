@@ -2,9 +2,11 @@ import { useCallback, Dispatch, SetStateAction, useRef } from 'react';
 import { AppSettings, ChatMessage, UploadedFile, ChatSettings as IndividualChatSettings, ChatHistoryItem, SavedChatSession } from '../types';
 import { generateUniqueId, buildContentParts, pcmBase64ToWavUrl, createChatHistoryForApi, getKeyForRequest, generateSessionTitle } from '../utils/appUtils';
 import { geminiServiceInstance } from '../services/geminiService';
-import { Chat, Part, UsageMetadata } from '@google/genai';
+import { Part, UsageMetadata } from '@google/genai';
 import { logService } from '../services/logService';
 import { DEFAULT_CHAT_SETTINGS } from '../constants/appConstants';
+import { persistentStoreService } from '../services/persistentStoreService';
+import { apiRotationService } from '../services/apiRotationService';
 
 type CommandedInputSetter = Dispatch<SetStateAction<{ text: string; id: number; } | null>>;
 type SessionsUpdater = (updater: (prev: SavedChatSession[]) => SavedChatSession[]) => void;
@@ -61,7 +63,6 @@ export const useMessageHandler = ({
     setActiveSessionId,
     setCommandedInput,
     activeJobs,
-    loadingSessionIds,
     setLoadingSessionIds,
     updateAndPersistSessions
 }: MessageHandlerProps) => {
@@ -141,9 +142,11 @@ export const useMessageHandler = ({
             return; 
         }
 
-        const hasFileId = filesToUse.some(f => f.fileUri);
-        const keyResult = getKeyForRequest(appSettings, sessionToUpdate);
-        if ('error' in keyResult) {
+    const hasFileId = filesToUse.some(f => f.fileUri);
+    const rotationEnabled = !!(appSettings.apiRotation?.enabled && (appSettings.apiRotation?.selectedConfigIds || []).length > 0);
+
+    const keyResult = rotationEnabled ? null : getKeyForRequest(appSettings, sessionToUpdate);
+    if (!rotationEnabled && keyResult && 'error' in keyResult) {
             logService.error("Send message failed: API Key not configured.");
              const errorMsg: ChatMessage = { id: generateUniqueId(), role: 'error', content: keyResult.error, timestamp: new Date() };
              const newSession: SavedChatSession = { id: generateUniqueId(), title: "API Key Error", messages: [errorMsg], settings: { ...DEFAULT_CHAT_SETTINGS, ...appSettings }, timestamp: Date.now() };
@@ -151,8 +154,10 @@ export const useMessageHandler = ({
              setActiveSessionId(newSession.id);
             return;
         }
-        const { key: keyToUse, isNewKey } = keyResult;
-        const shouldLockKey = isNewKey && hasFileId;
+    const { key: keyToUse, isNewKey } = keyResult || ({} as any);
+    // 轮询模式下，锁定密钥在成功后根据实际使用的配置再设置
+    const shouldLockKey = rotationEnabled ? false : (isNewKey && hasFileId);
+    let lockKeyOnSuccess: string | null = rotationEnabled ? null : (shouldLockKey ? keyToUse : null);
 
         const newAbortController = new AbortController();
         const generationId = generateUniqueId();
@@ -166,7 +171,7 @@ export const useMessageHandler = ({
         if (!sessionId) {
             const newSessionId = generateUniqueId();
             let newSessionSettings = { ...DEFAULT_CHAT_SETTINGS, ...appSettings };
-            if (shouldLockKey) newSessionSettings.lockedApiKey = keyToUse;
+            if (shouldLockKey && !rotationEnabled) newSessionSettings.lockedApiKey = keyToUse;
 
             const newTitle = "New Chat"; // Will be updated when message is added
             const newSession: SavedChatSession = {
@@ -283,7 +288,7 @@ export const useMessageHandler = ({
             activeJobs.current.delete(generationId);
         };
 
-        const streamOnComplete = (usageMetadata?: UsageMetadata, groundingMetadata?: any) => {
+    const streamOnComplete = async (usageMetadata?: UsageMetadata, groundingMetadata?: any) => {
             // If no content parts were ever received, thinking ends now.
             if (appSettings.isStreamingEnabled && !firstContentPartTimeRef.current) {
                 firstContentPartTimeRef.current = new Date();
@@ -327,12 +332,116 @@ export const useMessageHandler = ({
                     .filter(m => m.role !== 'model' || m.content.trim() !== '' || (m.files && m.files.length > 0) || m.audioSrc); // Remove empty model messages
                 
                 let newSettings = s.settings;
-                if(shouldLockKey) newSettings = { ...s.settings, lockedApiKey: keyToUse };
+                if(lockKeyOnSuccess) newSettings = { ...s.settings, lockedApiKey: lockKeyOnSuccess };
 
                 return {...s, messages: finalMessages, settings: newSettings};
             }));
             setLoadingSessionIds(prev => { const next = new Set(prev); next.delete(currentSessionId); return next; });
             activeJobs.current.delete(generationId);
+
+            // --- Smart Reply Suggestions (optional) ---
+            try {
+                if (appSettings.isSuggestionsEnabled) {
+                    // 1) Mark the just-finished model message as generating suggestions
+                    updateAndPersistSessions(prev => prev.map(s => {
+                        if (s.id !== currentSessionId) return s;
+                        return {
+                            ...s,
+                            messages: s.messages.map(m => m.id === generationId ? { ...m, isGeneratingSuggestions: true } : m)
+                        };
+                    }));
+
+                    // 2) Extract the user+model contents of the completed turn
+                    let userContent = '';
+                    let modelContent = '';
+                    updateAndPersistSessions(prev => {
+                        const ss = prev.find(s => s.id === currentSessionId);
+                        if (ss) {
+                            const idx = ss.messages.findIndex(m => m.id === generationId);
+                            if (idx > 0) {
+                                const prevMsg = ss.messages[idx - 1];
+                                if (prevMsg?.role === 'user') userContent = prevMsg.content || '';
+                            }
+                            const modelMsg = ss.messages.find(m => m.id === generationId);
+                            if (modelMsg) modelContent = modelMsg.content || '';
+                        }
+                        return prev;
+                    });
+
+                    // 3) Get an API key for the quick call
+                    await (async () => {
+                        const keyResult = getKeyForRequest(appSettings, currentChatSettings);
+                        if (!('error' in keyResult)) {
+                            const langPref = (appSettings.language === 'system')
+                                ? (navigator.language?.toLowerCase().includes('zh') ? 'zh' : 'en')
+                                : appSettings.language;
+                            const suggestions = await geminiServiceInstance.generateSuggestions(keyResult.key, userContent, modelContent, langPref as 'en' | 'zh');
+                            if (suggestions && suggestions.length > 0) {
+                                updateAndPersistSessions(prev => prev.map(s => s.id === currentSessionId ? {
+                                    ...s,
+                                    messages: s.messages.map(m => m.id === generationId ? { ...m, suggestions, isGeneratingSuggestions: false } : m)
+                                } : s));
+                            } else {
+                                updateAndPersistSessions(prev => prev.map(s => s.id === currentSessionId ? {
+                                    ...s,
+                                    messages: s.messages.map(m => m.id === generationId ? { ...m, isGeneratingSuggestions: false } : m)
+                                } : s));
+                            }
+                        } else {
+                            updateAndPersistSessions(prev => prev.map(s => s.id === currentSessionId ? {
+                                ...s,
+                                messages: s.messages.map(m => m.id === generationId ? { ...m, isGeneratingSuggestions: false } : m)
+                            } : s));
+                        }
+                    })();
+                }
+            } catch (e) {
+                logService.warn('Suggestion generation failed (non-fatal).', e);
+                updateAndPersistSessions(prev => prev.map(s => s.id === currentSessionId ? {
+                    ...s,
+                    messages: s.messages.map(m => m.id === generationId ? { ...m, isGeneratingSuggestions: false } : m)
+                } : s));
+            }
+
+            // --- Auto Title (optional) ---
+            try {
+                if (appSettings.isAutoTitleEnabled) {
+                    let userContent = '';
+                    let modelContent = '';
+                    let currentTitle = '';
+                    updateAndPersistSessions(prev => {
+                        const ss = prev.find(s => s.id === currentSessionId);
+                        if (ss) {
+                            currentTitle = ss.title || '';
+                            const idx = ss.messages.findIndex(m => m.id === generationId);
+                            if (idx > 0) {
+                                const prevMsg = ss.messages[idx - 1];
+                                if (prevMsg?.role === 'user') userContent = prevMsg.content || '';
+                            }
+                            const modelMsg = ss.messages.find(m => m.id === generationId);
+                            if (modelMsg) modelContent = modelMsg.content || '';
+                        }
+                        return prev;
+                    });
+                    // Skip if content is insufficient
+                    await (async () => {
+                        if (userContent.trim() && modelContent.trim()) {
+                            const keyResult = getKeyForRequest(appSettings, currentChatSettings);
+                            if (!('error' in keyResult)) {
+                                const langPref = (appSettings.language === 'system')
+                                    ? (navigator.language?.toLowerCase().includes('zh') ? 'zh' : 'en')
+                                    : appSettings.language;
+                                const newTitle = await geminiServiceInstance.generateTitle(keyResult.key, userContent, modelContent, langPref as 'en' | 'zh');
+                                if (newTitle && newTitle.trim() && newTitle.trim() !== currentTitle && newTitle.trim().length <= 40) {
+                                    updateAndPersistSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, title: newTitle.trim() } : s));
+                                }
+                            }
+                        }
+                    })();
+                }
+            } catch (e) {
+                logService.warn('Auto-title generation failed (non-fatal).', e);
+            }
         };
 
         const streamOnPart = (part: Part) => {
@@ -438,21 +547,81 @@ export const useMessageHandler = ({
             }));
         };
 
-        if (appSettings.isStreamingEnabled) {
-            await geminiServiceInstance.sendMessageStream(keyToUse, activeModelId, fullHistory, sessionToUpdate.systemInstruction, { temperature: sessionToUpdate.temperature, topP: sessionToUpdate.topP }, sessionToUpdate.showThoughts, sessionToUpdate.thinkingBudget, !!sessionToUpdate.isGoogleSearchEnabled, !!sessionToUpdate.isCodeExecutionEnabled, !!sessionToUpdate.isUrlContextEnabled, newAbortController.signal, streamOnPart, onThoughtChunk, streamOnError, streamOnComplete);
-        } else { 
-            await geminiServiceInstance.sendMessageNonStream(keyToUse, activeModelId, fullHistory, sessionToUpdate.systemInstruction, { temperature: sessionToUpdate.temperature, topP: sessionToUpdate.topP }, sessionToUpdate.showThoughts, sessionToUpdate.thinkingBudget, !!sessionToUpdate.isGoogleSearchEnabled, !!sessionToUpdate.isCodeExecutionEnabled, !!sessionToUpdate.isUrlContextEnabled, newAbortController.signal,
-                streamOnError,
-                (parts: Part[], thoughtsText?: string, usageMetadata?: UsageMetadata, groundingMetadata?: any) => {
-                    for(const part of parts) {
-                        streamOnPart(part);
-                    }
-                    if(thoughtsText) {
-                        onThoughtChunk(thoughtsText);
-                    }
-                    streamOnComplete(usageMetadata, groundingMetadata);
+        // --- 发送逻辑：支持多API轮询/失败切换 ---
+        const sendOnceWithConfig = async (apiKeyToUse: string, endpoint: string | undefined) => {
+            // 临时覆盖服务的代理URL
+            const originalSettingsSnapshot = { ...appSettings };
+            try {
+                geminiServiceInstance.updateSettings({ ...appSettings, apiProxyUrl: endpoint || null });
+                if (appSettings.isStreamingEnabled) {
+                    await new Promise<void>((resolve, reject) => {
+                        geminiServiceInstance.sendMessageStream(apiKeyToUse, activeModelId, fullHistory, sessionToUpdate!.systemInstruction, { temperature: sessionToUpdate!.temperature, topP: sessionToUpdate!.topP }, sessionToUpdate!.showThoughts, sessionToUpdate!.thinkingBudget, !!sessionToUpdate!.isGoogleSearchEnabled, !!sessionToUpdate!.isCodeExecutionEnabled, !!sessionToUpdate!.isUrlContextEnabled, newAbortController.signal,
+                            streamOnPart,
+                            onThoughtChunk,
+                            (err: Error) => reject(err),
+                            async (usage?: UsageMetadata, grounding?: any) => { await streamOnComplete(usage, grounding); resolve(); }
+                        );
+                    });
+                } else {
+                    await new Promise<void>((resolve, reject) => {
+                        geminiServiceInstance.sendMessageNonStream(apiKeyToUse, activeModelId, fullHistory, sessionToUpdate!.systemInstruction, { temperature: sessionToUpdate!.temperature, topP: sessionToUpdate!.topP }, sessionToUpdate!.showThoughts, sessionToUpdate!.thinkingBudget, !!sessionToUpdate!.isGoogleSearchEnabled, !!sessionToUpdate!.isCodeExecutionEnabled, !!sessionToUpdate!.isUrlContextEnabled, newAbortController.signal,
+                            (err: Error) => reject(err),
+                            async (parts: Part[], thoughtsText?: string, usage?: UsageMetadata, grounding?: any) => {
+                                for (const part of parts) streamOnPart(part);
+                                if (thoughtsText) onThoughtChunk(thoughtsText);
+                                await streamOnComplete(usage, grounding);
+                                resolve();
+                            }
+                        );
+                    });
                 }
-            );
+            } finally {
+                // 恢复原设置
+                geminiServiceInstance.updateSettings(originalSettingsSnapshot as any);
+            }
+        };
+
+        if (rotationEnabled) {
+            try {
+                // 同步配置到轮询服务
+                const allConfigs = persistentStoreService.getApiConfigs();
+                const selectedIds = appSettings.apiRotation!.selectedConfigIds;
+                const selected = allConfigs.filter(c => selectedIds.includes(c.id));
+
+                // 添加或更新配置选择
+                const existing = new Map(apiRotationService.getApiConfigurations().map(c => [c.id, c]));
+                // 将未选择的设为不选
+                for (const cfg of apiRotationService.getApiConfigurations()) {
+                    apiRotationService.updateApiSelection(cfg.id, selectedIds.includes(cfg.id));
+                }
+                for (const c of selected) {
+                    if (!existing.has(c.id)) {
+                        apiRotationService.addApiConfiguration({ id: c.id, name: c.name, apiKey: c.apiKey, endpoint: (c as any).apiProxyUrl || (c as any).proxyUrl || undefined, modelId: activeModelId, isSelected: true });
+                    } else {
+                        apiRotationService.updateApiSelection(c.id, true);
+                    }
+                }
+                apiRotationService.updateSettings({
+                    mode: appSettings.apiRotation!.mode,
+                    enableFailover: appSettings.apiRotation!.enableFailover,
+                    maxRetries: appSettings.apiRotation!.maxRetries,
+                    healthCheckInterval: appSettings.apiRotation!.healthCheckInterval,
+                });
+
+                // 执行带失败切换的调用
+                await apiRotationService.executeWithFailover(async (cfg) => {
+                    // 成功后锁定该密钥（如果会话中包含文件）
+                    if (hasFileId) lockKeyOnSuccess = cfg.apiKey;
+                    await sendOnceWithConfig(cfg.apiKey, cfg.endpoint);
+                    return 'ok';
+                });
+            } catch (error: any) {
+                // 最终失败才向用户显示错误
+                streamOnError(error instanceof Error ? error : new Error(String(error)));
+            }
+        } else {
+            // 单一路径（无轮询）
+            await sendOnceWithConfig(keyToUse, appSettings.apiProxyUrl || undefined);
         }
     }, [activeSessionId, selectedFiles, editingMessageId, appSettings, setAppFileError, setSelectedFiles, setEditingMessageId, setActiveSessionId, userScrolledUp, updateAndPersistSessions, setLoadingSessionIds, activeJobs, aspectRatio, handleApiError]);
 

@@ -11,6 +11,7 @@ import { DataManagementSection } from './settings/DataManagementSection';
 import { SettingsActions } from './settings/SettingsActions';
 import { ModelOption } from '../types';
 import { Modal } from './shared/Modal';
+import { ApiRotationSection } from './settings/ApiRotationSection';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -151,24 +152,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               )}
               {activeTab === 'api' && (
-                <ApiConfigSection
-                  useCustomApiConfig={settings.useCustomApiConfig}
-                  setUseCustomApiConfig={(val) => updateSetting('useCustomApiConfig', val)}
-                  activeApiConfigId={settings.activeApiConfigId}
-                  onActiveConfigChange={(config) => {
-                    if (config) {
-                      updateSetting('apiKey', config.apiKey);
-                      updateSetting('apiProxyUrl', config.apiProxyUrl || null);
-                      updateSetting('activeApiConfigId', config.id);
-                    } else {
-                      updateSetting('apiKey', null);
-                      updateSetting('apiProxyUrl', null);
-                      updateSetting('activeApiConfigId', null);
-                    }
-                  }}
-                  refreshTrigger={refreshTrigger}
-                  t={t}
-                />
+                <div className="space-y-4">
+                  <ApiConfigSection
+                    useCustomApiConfig={settings.useCustomApiConfig}
+                    setUseCustomApiConfig={(val) => updateSetting('useCustomApiConfig', val)}
+                    activeApiConfigId={settings.activeApiConfigId}
+                    onActiveConfigChange={(config) => {
+                      if (config) {
+                        updateSetting('apiKey', config.apiKey);
+                        // 兼容旧字段 proxyUrl
+                        // @ts-ignore
+                        const proxyUrl = (config.apiProxyUrl ?? (config as any).proxyUrl) || null;
+                        updateSetting('apiProxyUrl', proxyUrl);
+                        updateSetting('activeApiConfigId', config.id);
+                      } else {
+                        updateSetting('apiKey', null);
+                        updateSetting('apiProxyUrl', null);
+                        updateSetting('activeApiConfigId', null);
+                      }
+                    }}
+                    refreshTrigger={refreshTrigger}
+                    t={t}
+                  />
+                  <ApiRotationSection
+                    settings={settings}
+                    onChange={(partial) => setSettings(prev => ({ ...prev, ...partial }))}
+                  />
+                </div>
               )}
               {activeTab === 'model' && (
                 <ChatBehaviorSection
@@ -199,6 +209,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   setUseFilesApiForImages={(val) => updateSetting('useFilesApiForImages', val)}
                   expandCodeBlocksByDefault={settings.expandCodeBlocksByDefault}
                   setExpandCodeBlocksByDefault={(val) => updateSetting('expandCodeBlocksByDefault', val)}
+                  // 自动功能开关
+                  isAutoTitleEnabled={settings.isAutoTitleEnabled || false}
+                  setIsAutoTitleEnabled={(val) => updateSetting('isAutoTitleEnabled', val)}
+                  isSuggestionsEnabled={settings.isSuggestionsEnabled || false}
+                  setIsSuggestionsEnabled={(val) => updateSetting('isSuggestionsEnabled', val)}
+                  // 图表渲染和通知功能
+                  isMermaidRenderingEnabled={settings.isMermaidRenderingEnabled || false}
+                  setIsMermaidRenderingEnabled={(val) => updateSetting('isMermaidRenderingEnabled', val)}
+                  isGraphvizRenderingEnabled={settings.isGraphvizRenderingEnabled || false}
+                  setIsGraphvizRenderingEnabled={(val) => updateSetting('isGraphvizRenderingEnabled', val)}
+                  isCompletionNotificationEnabled={settings.isCompletionNotificationEnabled || false}
+                  setIsCompletionNotificationEnabled={(val) => updateSetting('isCompletionNotificationEnabled', val)}
                   t={t}
                 />
               )}

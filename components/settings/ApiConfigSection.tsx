@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { KeyRound, Info, Plus, Trash2, Save, EyeOff, Eye } from 'lucide-react';
 import { getResponsiveValue } from '../../utils/appUtils';
-import { ApiConfig, ApiConfigSectionProps } from '../../types';
+import { ApiConfig } from '../../types';
 import { persistentStoreService } from '../../services/persistentStoreService';
 import { translations } from '../../utils/appUtils';
 
@@ -63,8 +63,8 @@ export const ApiConfigSection: React.FC<ApiConfigSectionProps> = ({
     }
 
     // 更新表单的临时值
-    setTempApiKey(activeConfig.apiKey);
-    setTempProxyUrl(activeConfig.proxyUrl || ''); // 确保 tempProxyUrl 始终是字符串
+  setTempApiKey(activeConfig.apiKey);
+  setTempProxyUrl((activeConfig as any).apiProxyUrl || (activeConfig as any).proxyUrl || ''); // 兼容旧字段，确保字符串
   }, [activeApiConfigId, refreshTrigger]); // 添加 refreshTrigger 依赖
 
   const inputBaseClasses = "w-full p-2 border rounded-md focus:ring-2 focus:border-[var(--theme-border-focus)] text-[var(--theme-text-primary)] placeholder-[var(--theme-text-tertiary)] text-sm custom-scrollbar";
@@ -85,7 +85,7 @@ export const ApiConfigSection: React.FC<ApiConfigSectionProps> = ({
         // 更新现有配置
         persistentStoreService.updateApiConfig(activeApiConfigId, {
           apiKey: tempApiKey,
-          proxyUrl: tempProxyUrl
+          apiProxyUrl: (tempProxyUrl || '').trim()
         });
         updatedConfig = persistentStoreService.getApiConfigById(activeApiConfigId) || null;
       } else {
@@ -93,7 +93,7 @@ export const ApiConfigSection: React.FC<ApiConfigSectionProps> = ({
         updatedConfig = persistentStoreService.addApiConfig({
           name: newConfigName || '默认 API 配置',
           apiKey: tempApiKey,
-          proxyUrl: tempProxyUrl,
+          apiProxyUrl: (tempProxyUrl || '').trim(),
           isDefault: apiConfigs.length === 0 // 如果是第一个配置，设为默认
         });
         
@@ -130,7 +130,7 @@ export const ApiConfigSection: React.FC<ApiConfigSectionProps> = ({
     const config = persistentStoreService.getApiConfigById(configId);
     if (config) {
       setTempApiKey(config.apiKey);
-      setTempProxyUrl(config.proxyUrl);
+      setTempProxyUrl(((config as any).apiProxyUrl || (config as any).proxyUrl) ?? '');
       persistentStoreService.setLastSelectedApiConfigId(config.id);
       onActiveConfigChange(config); // 通知父组件，活动配置已更改
     }
@@ -149,7 +149,7 @@ export const ApiConfigSection: React.FC<ApiConfigSectionProps> = ({
       const newCurrentConfig = persistentStoreService.getCurrentOrFirstApiConfig();
       if (newCurrentConfig) {
         setTempApiKey(newCurrentConfig.apiKey);
-        setTempProxyUrl(newCurrentConfig.proxyUrl || '');
+        setTempProxyUrl(((newCurrentConfig as any).apiProxyUrl || (newCurrentConfig as any).proxyUrl) || '');
         onActiveConfigChange(newCurrentConfig);
       } else {
         setTempApiKey('');
@@ -167,7 +167,7 @@ export const ApiConfigSection: React.FC<ApiConfigSectionProps> = ({
                    persistentStoreService.getCurrentOrFirstApiConfig();
     if (config) {
       setTempApiKey(config.apiKey);
-      setTempProxyUrl(config.proxyUrl || '');
+      setTempProxyUrl(((config as any).apiProxyUrl || (config as any).proxyUrl) || '');
     } else {
       setTempApiKey('');
       setTempProxyUrl('');
@@ -224,7 +224,7 @@ export const ApiConfigSection: React.FC<ApiConfigSectionProps> = ({
                   >
                     <div className="font-medium text-sm">{config.name}</div>
                     <div className="text-xs text-[var(--theme-text-tertiary)]">
-                      {config.proxyUrl ? `代理: ${config.proxyUrl}` : '无代理'}
+                      {((config as any).apiProxyUrl || (config as any).proxyUrl) ? `代理: ${((config as any).apiProxyUrl || (config as any).proxyUrl)}` : '无代理'}
                       {config.isDefault && ' • 默认'}
                     </div>
                   </div>

@@ -204,6 +204,8 @@ export const MessageContent: React.FC<MessageContentProps> = React.memo(({ messa
                     {(isLoading || (generationStartTime && generationEndTime)) && <MessageTimer startTime={generationStartTime} endTime={generationEndTime} isLoading={isLoading} />}
                 </div>
             )}
+
+                        {/* Smart reply suggestions are rendered near the input area now */}
         </>
     );
 });

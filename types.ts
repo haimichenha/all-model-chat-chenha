@@ -96,6 +96,16 @@ export interface ApiConfig {
   isDefault?: boolean;
 }
 
+// API 轮询UI设置（仅保存在 AppSettings）
+export interface ApiRotationUiSettings {
+  enabled: boolean; // 是否启用轮询/多路
+  mode: 'round-robin' | 'random' | 'priority'; // 轮询模式
+  enableFailover: boolean; // 失败切换
+  maxRetries: number; // 最大尝试数
+  healthCheckInterval: number; // 健康检查间隔（分钟）
+  selectedConfigIds: string[]; // 勾选参与轮询的配置ID
+}
+
 // 系统提示接口
 export interface SystemPrompt {
   id: string;
@@ -153,6 +163,8 @@ export interface AppSettings extends ChatSettings {
  isGraphvizRenderingEnabled?: boolean;
  isCompletionNotificationEnabled?: boolean;
  isSuggestionsEnabled?: boolean;
+  // API 轮询设置
+  apiRotation?: ApiRotationUiSettings;
 }
 
 
@@ -240,6 +252,8 @@ export interface MessageListProps {
   onScrollToNextTurn?: () => void;
   showScrollToBottom?: boolean;
   onScrollToBottom?: () => void;
+  // 画中画请求：右键某条模型消息后在小窗中进行解释/重答
+  onPipRequest?: (mode: 'explain' | 'reanswer', selectedText: string, originMessage: ChatMessage) => void;
 }
 
 export interface PreloadedMessage {

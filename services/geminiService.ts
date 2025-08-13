@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Part, Content, GenerateContentResponse, File as GeminiFile, UploadFileConfig, UsageMetadata } from "@google/genai";
+import { GoogleGenAI, Part, Content, File as GeminiFile, UploadFileConfig, UsageMetadata } from "@google/genai";
 import { GeminiService, ChatHistoryItem, ModelOption, AppSettings, ThoughtSupportingPart } from '../types';
 import { logService } from "./logService";
 import { fileToBase64 } from "../utils/appUtils";
@@ -51,33 +51,155 @@ class GeminiServiceImpl implements GeminiService {
         }
 
         const originalFetch = globalThis.fetch;
-        const GOOGLE_HOSTNAME = 'generativelanguage.googleapis.com';
+        const GOOGLE_HOSTNAMES = new Set([
+            'generativelanguage.googleapis.com',
+            'upload.generativelanguage.googleapis.com',
+        ]);
         let isInterceptorActive = false;
 
         logService.info(`[PROXY WRAPPER] Activating for API call. Target: ${proxyUrl}`);
 
-        globalThis.fetch = async (input, init) => {
-            const url = new URL(input.toString());
-
-            // 只拦截发往 Google API 的请求
-            if (url.hostname === GOOGLE_HOSTNAME) {
-                isInterceptorActive = true;
-                const proxy = new URL(proxyUrl);
-                const originalPath = url.pathname;
-                
-                // 兼容类似 https://api-proxy.me/gemini/ 的路径
-                const newPath = (proxy.pathname + originalPath).replace(/\/\//g, '/');
-
-                url.hostname = proxy.hostname;
-                url.port = proxy.port;
-                url.protocol = proxy.protocol;
-                url.pathname = newPath;
-                
-                logService.info(`[PROXY WRAPPER] Redirecting fetch to ${url.toString()}`);
-                return originalFetch(url.toString(), init);
+        globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+            // 构造可解析的 URL
+            let requestUrl: URL | null = null;
+            let baseHeaders: Headers | null = null;
+            let methodFromRequest: string | undefined;
+            let bodyFromRequest: BodyInit | undefined;
+            let credentialsFromRequest: RequestCredentials | undefined;
+            try {
+                if (input instanceof Request) {
+                    requestUrl = new URL(input.url);
+                    baseHeaders = new Headers(input.headers);
+                    methodFromRequest = input.method;
+                    // 注意：读取 body 可能已被消费，这里尽量保留 init 的 body 优先
+                    // @ts-ignore
+                    bodyFromRequest = undefined;
+                    credentialsFromRequest = input.credentials as RequestCredentials | undefined;
+                } else if (input instanceof URL) {
+                    requestUrl = new URL(input.toString());
+                } else if (typeof input === 'string') {
+                    requestUrl = new URL(input);
+                }
+            } catch {
+                // 如果无法解析 URL，则回退到原始 fetch
+                return originalFetch(input as any, init as any);
             }
-            // 对于所有其他请求，使用原始的fetch函数
-            return originalFetch(input, init);
+
+            if (!requestUrl) {
+                return originalFetch(input as any, init as any);
+            }
+
+            const proxy = proxyUrl ? new URL(proxyUrl) : null;
+
+            // 处理到 Google 官方域名的请求：改写为代理域名
+            if (GOOGLE_HOSTNAMES.has(requestUrl.hostname)) {
+                isInterceptorActive = true;
+                if (!proxy) {
+                    // 没有配置代理则直接放行
+                    return originalFetch(input as any, init as any);
+                }
+                const originalPath = requestUrl.pathname;
+                    const newPath = (proxy.pathname + originalPath).replace(/\/+/g, '/');
+
+                const proxiedUrl = new URL(requestUrl.toString());
+                proxiedUrl.hostname = proxy.hostname;
+                proxiedUrl.port = proxy.port;
+                proxiedUrl.protocol = proxy.protocol;
+                proxiedUrl.pathname = newPath;
+
+                // 如果 URL 上带有 key=sk-...，也转为 Authorization 并移除 query key
+                const keyParam = proxiedUrl.searchParams.get('key');
+                if (keyParam && keyParam.startsWith('sk-')) {
+                    proxiedUrl.searchParams.delete('key');
+                }
+
+                // 合并 headers（init 优先，其次原始 Request 的 headers）
+                const headers = new Headers((init?.headers as any) || baseHeaders || {});
+                try {
+                    // 查找 x-goog-api-key（大小写不敏感），必要时转为 Authorization: Bearer
+                    let apiKeyHeaderName: string | null = null;
+                    for (const [k] of headers.entries()) {
+                        if (k.toLowerCase() === 'x-goog-api-key') { apiKeyHeaderName = k; break; }
+                    }
+                    if (apiKeyHeaderName) {
+                        const keyVal = headers.get(apiKeyHeaderName) || '';
+                        if (keyVal.startsWith('sk-')) {
+                            headers.set('authorization', `Bearer ${keyVal}`);
+                            headers.delete(apiKeyHeaderName);
+                            logService.info('[PROXY WRAPPER] Converted x-goog-api-key to Authorization: Bearer for proxy use');
+                        }
+                    }
+                    // 若 query 中带 key=sk-...，也补充 Authorization 头
+                    if (!headers.has('authorization') && keyParam && keyParam.startsWith('sk-')) {
+                        headers.set('authorization', `Bearer ${keyParam}`);
+                        logService.info('[PROXY WRAPPER] Moved query key to Authorization header for proxy use');
+                    }
+                } catch {}
+
+                const nextInit: RequestInit = {
+                    ...init,
+                    method: init?.method || methodFromRequest,
+                    headers,
+                    body: init?.body ?? bodyFromRequest,
+                    credentials: init?.credentials ?? credentialsFromRequest,
+                };
+
+                // 如果 body 仍为空且原始输入为 Request，尝试克隆读取文本以保留请求体（避免 JSON 丢失）
+                try {
+                    const method = (nextInit.method || 'GET').toUpperCase();
+                    if (!nextInit.body && input instanceof Request && method !== 'GET' && method !== 'HEAD') {
+                        const cloned = input.clone();
+                        const textBody = await cloned.text();
+                        if (textBody) nextInit.body = textBody as any;
+                    }
+                } catch {}
+
+                logService.info(`[PROXY WRAPPER] Redirecting fetch to ${proxiedUrl.toString()}`);
+                return originalFetch(proxiedUrl.toString(), nextInit);
+            }
+            // 处理已经指向代理域名的请求：不改写 URL，但也做 header 与 query 的兼容处理
+            if (proxy && requestUrl.hostname === proxy.hostname) {
+                isInterceptorActive = true;
+                // 合并 headers
+                const headers = new Headers((init?.headers as any) || baseHeaders || {});
+                let apiKeyHeaderName: string | null = null;
+                for (const [k] of headers.entries()) {
+                    if (k.toLowerCase() === 'x-goog-api-key') { apiKeyHeaderName = k; break; }
+                }
+                const keyParam = requestUrl.searchParams.get('key');
+                if (apiKeyHeaderName) {
+                    const keyVal = headers.get(apiKeyHeaderName) || '';
+                    if (keyVal.startsWith('sk-')) {
+                        headers.set('authorization', `Bearer ${keyVal}`);
+                        headers.delete(apiKeyHeaderName);
+                        logService.info('[PROXY WRAPPER] Converted x-goog-api-key to Authorization: Bearer (direct proxy path)');
+                    }
+                }
+                if (!headers.has('authorization') && keyParam && keyParam.startsWith('sk-')) {
+                    headers.set('authorization', `Bearer ${keyParam}`);
+                    requestUrl.searchParams.delete('key');
+                    logService.info('[PROXY WRAPPER] Moved query key to Authorization header (direct proxy path)');
+                }
+                const nextInit: RequestInit = {
+                    ...init,
+                    method: init?.method || methodFromRequest,
+                    headers,
+                    body: init?.body ?? bodyFromRequest,
+                    credentials: init?.credentials ?? credentialsFromRequest,
+                };
+                // 同样处理请求体保留
+                try {
+                    const method = (nextInit.method || 'GET').toUpperCase();
+                    if (!nextInit.body && input instanceof Request && method !== 'GET' && method !== 'HEAD') {
+                        const cloned = input.clone();
+                        const textBody = await cloned.text();
+                        if (textBody) nextInit.body = textBody as any;
+                    }
+                } catch {}
+                return originalFetch(requestUrl.toString(), nextInit);
+            }
+            // 其他域名直接放行
+            return originalFetch(input as any, init as any);
         };
 
         try {
@@ -93,9 +215,11 @@ class GeminiServiceImpl implements GeminiService {
     }
 
     private _buildGenerationConfig(
-        modelId: string, systemInstruction: string, config: { temperature?: number; topP?: number }, showThoughts: boolean,
-        thinkingBudget: number, isGoogleSearchEnabled?: boolean, isCodeExecutionEnabled?: boolean, isUrlContextEnabled?: boolean
+    modelId: string, systemInstruction: string, config: { temperature?: number; topP?: number }, showThoughts: boolean,
+    thinkingBudget: number, isGoogleSearchEnabled?: boolean, isCodeExecutionEnabled?: boolean, isUrlContextEnabled?: boolean
     ): any {
+    // Mark certain parameters as intentionally unused for now
+    void modelId; void showThoughts; void thinkingBudget;
         const generationConfig: any = { ...config };
         if (systemInstruction) generationConfig.systemInstruction = systemInstruction;
         const tools = generationConfig.tools || [];
@@ -172,8 +296,10 @@ class GeminiServiceImpl implements GeminiService {
     async generateImages(apiKey: string, modelId: string, prompt: string, aspectRatio: string, abortSignal: AbortSignal): Promise<string[]> {
         return this._withProxyFetch(async () => {
             const ai = this._getApiClientOrThrow(apiKey);
+        if (abortSignal?.aborted) throw new Error('aborted');
             // @ts-ignore
             const response = await ai.models.generateImages({ model: modelId, prompt, config: { aspectRatio, numberOfImages: 1, outputMimeType: 'image/jpeg' } });
+        if (abortSignal?.aborted) throw new Error('aborted');
             return response.generatedImages?.map((img: any) => img?.image?.imageBytes).filter(Boolean) ?? [];
         });
     }
@@ -181,6 +307,7 @@ class GeminiServiceImpl implements GeminiService {
     async generateSpeech(apiKey: string, modelId: string, text: string, voice: string, abortSignal: AbortSignal): Promise<string> {
         return this._withProxyFetch(async () => {
             const ai = this._getApiClientOrThrow(apiKey);
+        if (abortSignal?.aborted) throw new Error('aborted');
             // @ts-ignore
             const response = await ai.models.generateContent({ 
                 model: modelId, 
@@ -190,6 +317,7 @@ class GeminiServiceImpl implements GeminiService {
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } 
                 } 
             });
+        if (abortSignal?.aborted) throw new Error('aborted');
             const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
             if (typeof audioData === 'string') return audioData;
             throw new Error('No audio data received');
@@ -201,7 +329,7 @@ class GeminiServiceImpl implements GeminiService {
             const ai = this._getApiClientOrThrow(apiKey);
             const audioBase64 = await fileToBase64(audioFile);
             const audioPart: Part = { inlineData: { mimeType: audioFile.type, data: audioBase64 } };
-            const textPart: Part = { text: "Transcribe this audio." };
+            const textPart: Part = { text: isThinkingEnabled ? "Transcribe this audio carefully and return verbatim text only." : "Transcribe this audio." };
             const response = await ai.models.generateContent({ model: modelId, contents: { parts: [textPart, audioPart] } });
             if (response.text) return response.text;
             throw new Error("Transcription failed.");
@@ -243,8 +371,8 @@ class GeminiServiceImpl implements GeminiService {
             const ai = this._getApiClientOrThrow(apiKey);
             
             const prompt = language === 'zh'
-                ? `基于以下最近的对话交流，为用户生成三条可以发送给语言模型的建议回复。这些回复应该是简短、相关且多样化的，旨在继续对话。\n\n用户: "${userContent}"\n助手: "${modelContent}"\n\n请返回三个建议，每行一个，用数字编号：`
-                : `Based on the last conversation turn below, generate three short, relevant, and diverse suggested replies or follow-up questions that a user might click to continue the conversation.\n\nUSER: "${userContent}"\nASSISTANT: "${modelContent}"\n\nPlease return three suggestions, one per line, numbered:`;
+                ? `你是对话续写助手。基于“用户上一条提问”和“助手刚给出的回答”，生成三条“下一步追问”风格的建议，严格要求：\n- 只给出简短的中文问题句（10~25字左右），不要陈述句、不要前后缀、不要引号、不要编号或额外解释。\n- 必须紧密基于助手回答的关键点向下钻取，体现递进关系（例如：细化定义、请求例子、验证边界、对比方案、落地执行）。\n- 三条需彼此多样。\n\n用户上一条: "${userContent}"\n助手回答: "${modelContent}"\n\n现在仅输出三行，每行一条“下一步追问”的短问题（不加编号）：`
+                : `You are a follow-up suggester. Given the user's last question and the assistant's answer, produce three short follow-up questions that deepen the topic. Constraints:\n- Output only short English questions (roughly 5–12 words). No quotes, no numbering, no prefixes/suffixes.\n- Each must be tightly grounded in the assistant's answer, showing progression (clarify a term, request examples, test edge cases, compare options, outline steps).\n- Make them diverse.\n\nUSER: "${userContent}"\nASSISTANT: "${modelContent}"\n\nReturn exactly three lines, one follow-up question per line (no numbering):`;
 
             const response = await ai.models.generateContent({ 
                 model: 'gemini-2.0-flash-thinking-exp',
@@ -256,11 +384,27 @@ class GeminiServiceImpl implements GeminiService {
             });
             
             if (response.text) {
-                // Parse the numbered suggestions
-                return response.text.trim().split('\n')
-                    .map((s: string) => s.replace(/^\d+\.\s*/, '').trim())
-                    .filter(Boolean)
+                // 解析与清洗：
+                // - 去掉可能的编号/符号/引号
+                // - 仅保留问句风格的短文本
+                const cleaned = response.text
+                    .trim()
+                    .split('\n')
+                    .map((s: string) => s
+                        .replace(/^[-*•\d)（）.\s]+/, '')
+                        .replace(/^\d+\.?\s*/, '')
+                        .replace(/^['"“”‘’]+|['"“”‘’]+$/g, '')
+                        .trim()
+                    )
+                    .filter(Boolean);
+
+                // 仅取前三条，并限制长度，尽量确保为问题句（以? 结尾或以疑问词开头）
+                const isLikelyQuestion = (s: string) => /[?？]$/.test(s) || /^(how|what|why|which|when|where|who|can|should|could|是否|怎么|如何|为何|哪些|什么)/i.test(s);
+                const bounded = cleaned
+                    .map(s => s.length > 60 ? s.slice(0, 58).replace(/[，。,.\s]*$/, '') + '？' : s)
+                    .filter(isLikelyQuestion)
                     .slice(0, 3);
+                return bounded.length > 0 ? bounded : cleaned.slice(0, 3);
             } else {
                 throw new Error("Suggestions generation returned an empty response.");
             }
@@ -280,6 +424,14 @@ class GeminiServiceImpl implements GeminiService {
                 const streamResult = await ai.models.generateContentStream({ model: modelId, contents, ...generationConfig });
                 let finalResponse: any;
                 for await (const chunkResponse of streamResult) {
+                    if (abortSignal?.aborted) {
+                        throw new Error('aborted');
+                    }
+                    // thought 分片（如果有）
+                    const maybeThought = (chunkResponse as any)?.candidates?.[0]?.content?.parts?.find((p: any) => p?.thought) as any | undefined;
+                    if (maybeThought && typeof maybeThought.text === 'string') {
+                        onThoughtChunk(maybeThought.text);
+                    }
                     const part = chunkResponse.candidates?.[0]?.content?.parts?.[0];
                     if (part) onPart(part);
                     finalResponse = chunkResponse;
@@ -298,9 +450,15 @@ class GeminiServiceImpl implements GeminiService {
     ): Promise<void> {
         await this._withProxyFetch(async () => {
             try {
+                if (abortSignal?.aborted) {
+                    throw new Error('aborted');
+                }
                 const ai = this._getApiClientOrThrow(apiKey);
                 const generationConfig = this._buildGenerationConfig(modelId, systemInstruction, config, showThoughts, thinkingBudget, isGoogleSearchEnabled, isCodeExecutionEnabled, isUrlContextEnabled);
                 const response = await ai.models.generateContent({ model: modelId, contents: history as Content[], ...generationConfig });
+                if (abortSignal?.aborted) {
+                    throw new Error('aborted');
+                }
                 
                 let thoughtsText = "";
                 const responseParts: Part[] = [];
