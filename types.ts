@@ -94,6 +94,10 @@ export interface ApiConfig {
   apiKey: string;
   apiProxyUrl?: string | null;
   isDefault?: boolean;
+  isSelected?: boolean; // 用于多选功能
+  lastTested?: Date; // 最后测试时间
+  isHealthy?: boolean; // 健康状态
+  responseTime?: number; // 响应时间
 }
 
 // 系统提示接口

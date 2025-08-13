@@ -10,6 +10,8 @@ import { useChatGroups } from './useChatGroups';
 import { applyImageCachePolicy, generateUniqueId, logService } from '../utils/appUtils';
 import { CHAT_HISTORY_SESSIONS_KEY } from '../constants/appConstants';
 import { hybridStorageService } from '../services/hybridStorageService';
+import { apiTestingService } from '../services/apiTestingService';
+import { persistentStoreService } from '../services/persistentStoreService';
 
 export const useChat = (appSettings: AppSettings, isServiceInitialized: boolean = false) => {
     // 1. Core application state, now managed centrally in the main hook

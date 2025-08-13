@@ -17,6 +17,8 @@ interface ApiConfigSectionProps {
   refreshTrigger?: number;
   // 翻译函数
   t: (key: keyof typeof translations | string) => string;
+  // 打开增强的API管理器
+  onOpenEnhancedManager?: () => void;
 }
 
 export const ApiConfigSection: React.FC<ApiConfigSectionProps> = ({
@@ -27,6 +29,7 @@ export const ApiConfigSection: React.FC<ApiConfigSectionProps> = ({
   // onClose 参数暂时未使用，将在未来版本中用于自动关闭设置面板
   refreshTrigger,
   t,
+  onOpenEnhancedManager,
 }) => {
   const [isApiKeyFocused, setIsApiKeyFocused] = useState(false);
   const [apiConfigs, setApiConfigs] = useState<ApiConfig[]>([]);
@@ -176,10 +179,20 @@ export const ApiConfigSection: React.FC<ApiConfigSectionProps> = ({
 
   return (
     <div className="space-y-3 p-3 sm:p-4 border border-[var(--theme-border-secondary)] rounded-lg bg-[var(--theme-bg-secondary)]">
-      <h3 className="text-sm font-semibold text-[var(--theme-text-primary)] flex items-center mb-2">
-        <KeyRound size={iconSize} className="mr-2 text-[var(--theme-text-link)] opacity-80" />
-        {t('settingsApiConfig')}
-      </h3>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-semibold text-[var(--theme-text-primary)] flex items-center">
+          <KeyRound size={iconSize} className="mr-2 text-[var(--theme-text-link)] opacity-80" />
+          {t('settingsApiConfig')}
+        </h3>
+        {onOpenEnhancedManager && (
+          <button
+            onClick={onOpenEnhancedManager}
+            className="px-2 py-1 text-xs bg-[var(--theme-text-link)] text-white rounded hover:bg-[var(--theme-text-link-hover)] transition-colors"
+          >
+            高级管理
+          </button>
+        )}
+      </div>
 
       <label htmlFor="use-custom-api-config-toggle" className="flex items-center justify-between py-1 cursor-pointer">
         <span className="text-sm font-medium text-[var(--theme-text-secondary)]">
