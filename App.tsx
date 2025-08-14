@@ -233,27 +233,16 @@ const App: React.FC = () => {
 
   // Contextual explanation handlers
   const handleContextualAddToChat = useCallback((explanation: string) => {
-    // Add the explanation as a new user message in the chat
-    setCommandedInput({ 
-      text: `请解释这段内容：\n\n${explanation}`, 
-      id: Date.now() 
-    });
-    
-    // Focus the input textarea after adding
-    setTimeout(() => {
-      const textarea = document.querySelector('textarea[aria-label="Chat message input"]') as HTMLTextAreaElement;
-      if (textarea) textarea.focus();
-    }, 100);
-  }, [setCommandedInput]);
+    // Add the explanation directly as a user message and automatically send it
+    const contextMessage = `请帮我分析这段内容：\n\n${explanation}`;
+    handleSendMessage(contextMessage, []);
+  }, [handleSendMessage]);
 
   const handleContextualRegenerate = useCallback((newText: string) => {
-    // This could be used to replace selected text in message editing
-    // For now, we'll add it as a suggestion
-    setCommandedInput({ 
-      text: `请根据以下建议改进文本：\n\n${newText}`, 
-      id: Date.now() 
-    });
-  }, [setCommandedInput]);
+    // Add the regenerated text as a user message and automatically send it
+    const contextMessage = `请帮我改进这段文本：\n\n${newText}`;
+    handleSendMessage(contextMessage, []);
+  }, [handleSendMessage]);
 
   // Keyboard shortcuts
   useEffect(() => {
