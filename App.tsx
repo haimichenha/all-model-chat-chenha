@@ -14,8 +14,8 @@ import { logService } from './services/logService';
 import { SettingsModal } from './components/SettingsModal';
 import { LogViewer } from './components/LogViewer';
 import { PreloadedMessagesModal } from './components/PreloadedMessagesModal';
-
 import { geminiServiceInstance } from './services/geminiService';
+
 const App: React.FC = () => {
   const { appSettings, setAppSettings, currentTheme, language } = useAppSettings();
   const t = getTranslator(language);
@@ -88,6 +88,7 @@ const App: React.FC = () => {
       scrollToBottom,
       toggleGoogleSearch,
       toggleCodeExecution,
+      toggleUrlContext,
 
       handleExportAllSessions,
   } = useChat(appSettings, isServiceInitialized);
@@ -104,7 +105,7 @@ const App: React.FC = () => {
   const [isPreloadedMessagesModalOpen, setIsPreloadedMessagesModalOpen] = useState<boolean>(false);
   const [isHistorySidebarOpen, setIsHistorySidebarOpen] = useState<boolean>(window.innerWidth >= 768);
   const [isLogViewerOpen, setIsLogViewerOpen] = useState<boolean>(false);
-
+  
   const handleSaveSettings = (newSettings: AppSettings) => {
     // Save the new settings as the global default for subsequent new chats
     setAppSettings(newSettings);
@@ -210,6 +211,8 @@ const App: React.FC = () => {
         if (textarea) textarea.focus();
     }, 0);
   };
+
+
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -427,7 +430,7 @@ const App: React.FC = () => {
           isCodeExecutionEnabled={!!currentChatSettings.isCodeExecutionEnabled}
           onToggleCodeExecution={toggleCodeExecution}
           isUrlContextEnabled={!!currentChatSettings.isUrlContextEnabled}
-          onToggleUrlContext={() => {}}
+          onToggleUrlContext={toggleUrlContext}
           onClearChat={() => handleClearCurrentChat()}
           onNewChat={() => startNewChat()}
           onOpenSettings={() => setIsSettingsModalOpen(true)}

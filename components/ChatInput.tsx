@@ -1,5 +1,5 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { ArrowUp, Ban, XCircle, Plus, X, Edit2, UploadCloud, FileSignature, Link2, Camera, Mic, Loader2, Image, SlidersHorizontal, Globe, Check, Terminal, FileVideo } from 'lucide-react';
+import { ArrowUp, Ban, XCircle, Plus, X, Edit2, UploadCloud, FileSignature, Link2, Link, Camera, Mic, Loader2, Image, SlidersHorizontal, Globe, Check, Terminal, FileVideo } from 'lucide-react';
 import { UploadedFile, AppSettings, ModelOption } from '../types';
 import { ALL_SUPPORTED_MIME_TYPES, SUPPORTED_IMAGE_MIME_TYPES } from '../constants/fileConstants';
 import { translations, getActiveApiConfig, getResponsiveValue } from '../utils/appUtils';
@@ -78,7 +78,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   transcriptionModelId, isTranscriptionThinkingEnabled,
   isGoogleSearchEnabled, onToggleGoogleSearch,
   isCodeExecutionEnabled, onToggleCodeExecution,
-  onToggleUrlContext,
+  isUrlContextEnabled, onToggleUrlContext,
   onClearChat, onNewChat, onOpenSettings, onToggleCanvasPrompt,
   availableModels = [], onSelectModel,
   onTogglePinCurrentSession, onRetryLastTurn, onEditLastUserMessage,
@@ -562,6 +562,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                                                 </span>
                                                 {isCodeExecutionEnabled && <Check size={16} className="text-[var(--theme-text-link)]" />}
                                             </button>
+                                            <button onClick={() => { (onToggleUrlContext || (() => {}))(); setIsToolsMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-[var(--theme-text-primary)] hover:bg-[var(--theme-bg-tertiary)] flex items-center justify-between" role="menuitem">
+                                                <span className="flex items-center gap-3">
+                                                    <Link size={16}/> URL 上下文
+                                                </span>
+                                                {isUrlContextEnabled && <Check size={16} className="text-[var(--theme-text-link)]" />}
+                                            </button>
                                         </div>
                                     )}
                                 </div>
@@ -601,6 +607,27 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                                                 onClick={onToggleCodeExecution} 
                                                 className="text-[var(--theme-text-secondary)] hover:text-[var(--theme-text-primary)] p-0.5 rounded-full hover:bg-[var(--theme-bg-tertiary)] transition-colors"
                                                 aria-label="Disable Code Execution"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
+                                {isUrlContextEnabled && (
+                                    <>
+                                        <div className="h-4 w-px bg-[var(--theme-border-secondary)] mx-1.5"></div>
+                                        <div 
+                                            className="flex items-center gap-1.5 bg-[var(--theme-bg-info)] text-[var(--theme-text-link)] text-sm px-2.5 py-1 rounded-full transition-all"
+                                            style={{ animation: `fadeInUp 0.3s ease-out both` }}
+                                        >
+                                            <Link size={14} />
+                                            <span className="font-medium">
+                                                URL 上下文
+                                            </span>
+                                            <button 
+                                                onClick={onToggleUrlContext || (() => {})} 
+                                                className="text-[var(--theme-text-secondary)] hover:text-[var(--theme-text-primary)] p-0.5 rounded-full hover:bg-[var(--theme-bg-tertiary)] transition-colors"
+                                                aria-label="Disable URL Context"
                                             >
                                                 <X size={14} />
                                             </button>

@@ -329,4 +329,10 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   isTranscriptionThinkingEnabled: DEFAULT_TRANSCRIPTION_THINKING_ENABLED,
   useFilesApiForImages: false,
   expandCodeBlocksByDefault: false,
+  // 新增功能开关默认设置
+  isAutoTitleEnabled: false,
+  isSuggestionsEnabled: false,
+  isMermaidRenderingEnabled: false,
+  isGraphvizRenderingEnabled: false,
+  isCompletionNotificationEnabled: false,
 };
