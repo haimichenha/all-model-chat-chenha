@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, Fragment } from 'react';
 import { AppSettings } from '../types';
 import { Settings2, X, SlidersHorizontal, KeyRound, Bot } from 'lucide-react';
 import { DEFAULT_APP_SETTINGS } from '../constants/appConstants';
 import { Theme } from '../constants/themeConstants';
 import { translations, getResponsiveValue } from '../utils/appUtils';
 import { ApiConfigSection } from './settings/ApiConfigSection';
+import { EnhancedApiConfigManager } from './settings/EnhancedApiConfigManager';
 import { AppearanceSection } from './settings/AppearanceSection';
 import { ChatBehaviorSection } from './settings/ChatBehaviorSection';
 import { DataManagementSection } from './settings/DataManagementSection';
@@ -37,6 +38,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0); // 用于触发子组件刷新
+  const [isEnhancedApiManagerOpen, setIsEnhancedApiManagerOpen] = useState(false);
   
   const headingIconSize = getResponsiveValue(18, 20);
   const tabIconSize = getResponsiveValue(16, 18);
@@ -67,6 +69,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   ];
 
   return (
+    <>
     <Modal isOpen={isOpen} onClose={handleClose}>
       <div 
         className="bg-[var(--theme-bg-primary)] rounded-xl shadow-premium w-full max-w-md sm:max-w-3xl flex flex-col max-h-[90vh] sm:h-[85vh] sm:max-h-[750px]"
@@ -168,6 +171,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   }}
                   refreshTrigger={refreshTrigger}
                   t={t}
+                  onOpenEnhancedManager={() => setIsEnhancedApiManagerOpen(true)}
                 />
               )}
               {activeTab === 'model' && (
@@ -229,5 +233,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
       </div>
     </Modal>
+    
+    {/* Enhanced API Configuration Manager */}
+    {isEnhancedApiManagerOpen && (
+      <EnhancedApiConfigManager
+        isOpen={isEnhancedApiManagerOpen}
+        onClose={() => setIsEnhancedApiManagerOpen(false)}
+        onApiConfigChange={(config) => {
+          if (config) {
+            updateSetting('apiKey', config.apiKey);
+            updateSetting('apiProxyUrl', config.apiProxyUrl || null);
+            updateSetting('activeApiConfigId', config.id);
+            updateSetting('useCustomApiConfig', true);
+          }
+          // 触发刷新以更新 ApiConfigSection 组件
+          setRefreshTrigger(prev => prev + 1);
+        }}
+        currentApiConfigId={settings.activeApiConfigId}
+      />
+    )}
+  </>
   );
 };

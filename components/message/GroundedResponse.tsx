@@ -73,7 +73,7 @@ export const GroundedResponse: React.FC<GroundedResponseProps> = ({ text, metada
 
   return (
     <div>
-      <div className="markdown-body">
+      <div className="markdown-body message-content" data-message-content>
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkMath]}
           rehypePlugins={[rehypeRaw, rehypeKatex, rehypeHighlight]}

@@ -14,7 +14,10 @@ import { logService } from './services/logService';
 import { SettingsModal } from './components/SettingsModal';
 import { LogViewer } from './components/LogViewer';
 import { PreloadedMessagesModal } from './components/PreloadedMessagesModal';
+import { StorageQuotaModal } from './components/modals/StorageQuotaModal';
+import { ContextualExplanationPopup } from './components/contextual/ContextualExplanationPopup';
 import { geminiServiceInstance } from './services/geminiService';
+import { useContextualExplanation } from './hooks/useContextualExplanation';
 
 const App: React.FC = () => {
   const { appSettings, setAppSettings, currentTheme, language } = useAppSettings();
@@ -89,6 +92,11 @@ const App: React.FC = () => {
       toggleGoogleSearch,
       toggleCodeExecution,
       toggleUrlContext,
+      
+      // Storage quota management
+      storageQuotaError,
+      setStorageQuotaError,
+      handleStorageCleanup,
 
       handleExportAllSessions,
   } = useChat(appSettings, isServiceInitialized);
@@ -105,6 +113,17 @@ const App: React.FC = () => {
   const [isPreloadedMessagesModalOpen, setIsPreloadedMessagesModalOpen] = useState<boolean>(false);
   const [isHistorySidebarOpen, setIsHistorySidebarOpen] = useState<boolean>(window.innerWidth >= 768);
   const [isLogViewerOpen, setIsLogViewerOpen] = useState<boolean>(false);
+  
+  // Contextual explanation functionality
+  const {
+    isPopupOpen: isContextualPopupOpen,
+    selectedText: contextualSelectedText,
+    popupPosition: contextualPopupPosition,
+    closePopup: closeContextualPopup
+  } = useContextualExplanation({
+    minTextLength: 10,
+    enabledElements: ['.message-content', '.prose', '[data-message-content]']
+  });
   
   const handleSaveSettings = (newSettings: AppSettings) => {
     // Save the new settings as the global default for subsequent new chats
@@ -212,7 +231,18 @@ const App: React.FC = () => {
     }, 0);
   };
 
+  // Contextual explanation handlers
+  const handleContextualAddToChat = useCallback((explanation: string) => {
+    // Add the explanation directly as a user message and automatically send it
+    const contextMessage = `请帮我分析这段内容：\n\n${explanation}`;
+    handleSendMessage(contextMessage, []);
+  }, [handleSendMessage]);
 
+  const handleContextualRegenerate = useCallback((newText: string) => {
+    // Add the regenerated text as a user message and automatically send it
+    const contextMessage = `请帮我改进这段文本：\n\n${newText}`;
+    handleSendMessage(contextMessage, []);
+  }, [handleSendMessage]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -379,6 +409,24 @@ const App: React.FC = () => {
               onImportScenario={handleImportPreloadedScenario}
               onExportScenario={handleExportPreloadedScenario}
               t={t}
+            />
+          )}
+          {storageQuotaError && (
+            <StorageQuotaModal
+              isOpen={storageQuotaError}
+              onClose={() => setStorageQuotaError(false)}
+              onProceedWithCleanup={handleStorageCleanup}
+              currentSystemInstruction={currentChatSettings.systemInstruction}
+            />
+          )}
+          {isContextualPopupOpen && contextualPopupPosition && (
+            <ContextualExplanationPopup
+              selectedText={contextualSelectedText}
+              position={contextualPopupPosition}
+              onClose={closeContextualPopup}
+              onAddToChat={handleContextualAddToChat}
+              onRegenerate={handleContextualRegenerate}
+              currentSystemInstruction={currentChatSettings.systemInstruction}
             />
           )}
         </>
