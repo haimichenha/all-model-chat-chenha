@@ -16,6 +16,7 @@ interface ChatHistoryProps {
     activeJobs: React.MutableRefObject<Map<string, AbortController>>;
     updateAndPersistSessions: SessionsUpdater;
     activeChat: SavedChatSession | undefined;
+    onProcessLongText?: (text: string, fileName: string) => void; // 新增回调函数
 }
 
 export const useChatHistory = ({
@@ -28,6 +29,7 @@ export const useChatHistory = ({
     activeJobs,
     updateAndPersistSessions,
     activeChat,
+    onProcessLongText, // 新增回调函数
 }: ChatHistoryProps) => {
 
     const startNewChat = useCallback(() => {
@@ -88,24 +90,59 @@ export const useChatHistory = ({
     const loadInitialData = useCallback(() => {
         try {
             logService.info('Attempting to load chat history from localStorage.');
+            
+            // [安全增强] 首先检查 localStorage 是否可用并测试写入能力
+            try {
+                const testKey = '__storage_test__';
+                localStorage.setItem(testKey, 'test');
+                localStorage.removeItem(testKey);
+            } catch (storageError: any) {
+                logService.error('LocalStorage is not available or writable:', storageError);
+                alert('警告：浏览器存储功能不可用，聊天记录将无法保存。这可能是因为隐私模式或存储配额耗尽。');
+                // 即使存储不可用，也要启动应用，只是无法持久化
+                startNewChat();
+                return;
+            }
+
             const storedSessions = localStorage.getItem(CHAT_HISTORY_SESSIONS_KEY);
             let sessions: SavedChatSession[] = [];
+            
             if (storedSessions) {
                 try {
                     const parsed = JSON.parse(storedSessions);
                     if (Array.isArray(parsed)) {
                         sessions = parsed;
+                        
+                        // [安全增强] 验证会话数据的完整性
+                        sessions = sessions.filter(session => {
+                            if (!session.id || !session.title || !session.timestamp) {
+                                logService.warn(`Removing corrupted session: ${JSON.stringify(session)}`);
+                                return false;
+                            }
+                            return true;
+                        });
+                        
+                        logService.info(`Successfully loaded ${sessions.length} valid sessions from localStorage.`);
                     } else {
                         logService.warn('Stored chat history is corrupted (not an array). Discarding.');
                         localStorage.removeItem(CHAT_HISTORY_SESSIONS_KEY);
                     }
-                } catch (e) {
-                    logService.error('Failed to parse chat history from localStorage. Discarding.', { error: e });
+                } catch (parseError) {
+                    logService.error('Failed to parse chat history from localStorage. Discarding.', { error: parseError });
+                    
+                    // [安全增强] 尝试备份损坏的数据以便调试
+                    try {
+                        const corruptedData = localStorage.getItem(CHAT_HISTORY_SESSIONS_KEY);
+                        logService.error('Corrupted localStorage data:', corruptedData?.substring(0, 500) + '...');
+                    } catch (e) {
+                        // 忽略备份失败
+                    }
+                    
                     localStorage.removeItem(CHAT_HISTORY_SESSIONS_KEY);
                 }
             }
 
-            sessions.sort((a,b) => b.timestamp - a.timestamp);
+            sessions.sort((a, b) => b.timestamp - a.timestamp);
             setSavedSessions(sessions);
 
             const storedActiveId = localStorage.getItem(ACTIVE_CHAT_SESSION_ID_KEY);
@@ -119,7 +156,8 @@ export const useChatHistory = ({
                 startNewChat();
             }
         } catch (error) {
-            logService.error("Error loading chat history:", error);
+            logService.error("Critical error loading chat history:", error);
+            // [安全增强] 确保在任何错误情况下应用都能启动
             startNewChat();
         }
     }, [setSavedSessions, loadChatSession, startNewChat]);
@@ -192,6 +230,33 @@ export const useChatHistory = ({
         setTimeout(() => window.location.reload(), 50);
     }, [clearAllHistory]);
 
+    const handleImportSessions = useCallback((sessionsToImport: SavedChatSession[], textContent?: string, fileName?: string) => {
+        logService.info(`Importing ${sessionsToImport.length} sessions.`);
+        
+        // If we have text content, this is a plain text import that should be processed
+        if (textContent && fileName && onProcessLongText) {
+            onProcessLongText(textContent, fileName);
+            return;
+        }
+        
+        // Otherwise, handle structured session import
+        const validatedSessions = sessionsToImport.map(s => ({
+            ...s,
+            id: generateUniqueId(), // Assign a new ID to avoid conflicts
+            isImported: true,
+            timestamp: Date.now(), // Set import timestamp
+            title: `[导入] ${s.title}`, // Mark as imported
+        }));
+
+        updateAndPersistSessions(prev => [...validatedSessions, ...prev]);
+        
+        // Load the first imported session
+        if (validatedSessions.length > 0) {
+            const firstSession = validatedSessions[0];
+            loadChatSession(firstSession.id, [...validatedSessions, ...JSON.parse(localStorage.getItem(CHAT_HISTORY_SESSIONS_KEY) || '[]')]);
+        }
+    }, [updateAndPersistSessions, loadChatSession, onProcessLongText]);
+
     return {
         loadInitialData,
         loadChatSession,
@@ -201,5 +266,6 @@ export const useChatHistory = ({
         handleTogglePinSession,
         clearAllHistory,
         clearCacheAndReload,
+        handleImportSessions,
     };
 }

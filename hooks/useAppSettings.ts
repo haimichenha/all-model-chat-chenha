@@ -3,12 +3,24 @@ import { AppSettings } from '../types';
 import { DEFAULT_APP_SETTINGS, APP_SETTINGS_KEY } from '../constants/appConstants';
 import { AVAILABLE_THEMES, DEFAULT_THEME_ID } from '../constants/themeConstants';
 import { geminiServiceInstance } from '../services/geminiService';
+import { persistentStoreService } from '../services/persistentStoreService';
 import { generateThemeCssVariables } from '../utils/appUtils';
 
 export const useAppSettings = () => {
     const [appSettings, setAppSettings] = useState<AppSettings>(() => {
+        // 从localStorage加载基本设置
         const stored = localStorage.getItem(APP_SETTINGS_KEY);
-        return stored ? { ...DEFAULT_APP_SETTINGS, ...JSON.parse(stored) } : DEFAULT_APP_SETTINGS;
+        const baseSettings = stored ? { ...DEFAULT_APP_SETTINGS, ...JSON.parse(stored) } : DEFAULT_APP_SETTINGS;
+        
+        // 从持久化存储中加载当前或默认的API配置
+        const currentConfig = persistentStoreService.getCurrentOrFirstApiConfig();
+        if (currentConfig && baseSettings.useCustomApiConfig) {
+            baseSettings.apiKey = currentConfig.apiKey;
+            baseSettings.apiProxyUrl = currentConfig.proxyUrl || null;
+            baseSettings.activeApiConfigId = currentConfig.id;
+        }
+        
+        return baseSettings;
     });
 
     const [language, setLanguage] = useState<'en' | 'zh'>('en');

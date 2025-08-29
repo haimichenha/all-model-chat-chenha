@@ -1,0 +1,632 @@
+import { Dispatch, SetStateAction, useCallback } from 'react';
+import { AppSettings, ChatMessage, SavedChatSession, UploadedFile, ChatSettings, ChatGroup } from '../types';
+import { CHAT_HISTORY_SESSIONS_KEY, ACTIVE_CHAT_SESSION_ID_KEY, DEFAULT_CHAT_SETTINGS, CHAT_HISTORY_GROUPS_KEY } from '../constants/appConstants';
+import { generateUniqueId, logService, getTranslator } from '../utils/appUtils';
+
+type CommandedInputSetter = Dispatch<SetStateAction<{ text: string; id: number; } | null>>;
+type SessionsUpdater = (updater: (prev: SavedChatSession[]) => SavedChatSession[]) => void;
+
+interface ChatHistoryProps {
+    appSettings: AppSettings;
+    setSavedSessions: Dispatch<SetStateAction<SavedChatSession[]>>;
+    setSavedGroups: Dispatch<SetStateAction<ChatGroup[]>>;
+    setActiveSessionId: Dispatch<SetStateAction<string | null>>;
+    setEditingMessageId: Dispatch<SetStateAction<string | null>>;
+    setCommandedInput: CommandedInputSetter;
+    setSelectedFiles: Dispatch<SetStateAction<UploadedFile[]>>;
+    activeJobs: React.MutableRefObject<Map<string, AbortController>>;
+    updateAndPersistSessions: SessionsUpdater;
+    activeChat: SavedChatSession | undefined;
+    language: 'en' | 'zh';
+}
+
+export const useChatHistory = ({
+    appSettings,
+    setSavedSessions,
+    setSavedGroups,
+    setActiveSessionId,
+    setEditingMessageId,
+    setCommandedInput,
+    setSelectedFiles,
+    activeJobs,
+    updateAndPersistSessions,
+    activeChat,
+    language,
+}: ChatHistoryProps) => {
+    const t = getTranslator(language);
+
+    const updateAndPersistGroups = useCallback((updater: (prev: ChatGroup[]) => ChatGroup[]) => {
+        setSavedGroups(prevGroups => {
+            const newGroups = updater(prevGroups);
+            localStorage.setItem(CHAT_HISTORY_GROUPS_KEY, JSON.stringify(newGroups));
+            return newGroups;
+        });
+    }, [setSavedGroups]);
+
+
+    const startNewChat = useCallback(() => {
+        logService.info('Starting new chat session.');
+        
+        let settingsForNewChat: ChatSettings = { ...DEFAULT_CHAT_SETTINGS, ...appSettings };
+        if (activeChat) {
+            settingsForNewChat = {
+                ...settingsForNewChat,
+                isGoogleSearchEnabled: activeChat.settings.isGoogleSearchEnabled,
+                isCodeExecutionEnabled: activeChat.settings.isCodeExecutionEnabled,
+                isUrlContextEnabled: activeChat.settings.isUrlContextEnabled,
+            };
+        }
+
+        const newSessionId = generateUniqueId();
+        const newSession: SavedChatSession = {
+            id: newSessionId,
+            title: "New Chat",
+            messages: [],
+            timestamp: Date.now(),
+            settings: settingsForNewChat,
+            groupId: null,
+        };
+
+        updateAndPersistSessions(prev => [newSession, ...prev.filter(s => s.messages.length > 0)]);
+        setActiveSessionId(newSessionId);
+        localStorage.setItem(ACTIVE_CHAT_SESSION_ID_KEY, newSessionId);
+
+        setCommandedInput({ text: '', id: Date.now() });
+        setSelectedFiles([]);
+        setEditingMessageId(null);
+        
+        setTimeout(() => {
+            document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Chat message input"]')?.focus();
+        }, 0);
+    }, [appSettings, activeChat, updateAndPersistSessions, setActiveSessionId, setCommandedInput, setSelectedFiles, setEditingMessageId]);
+
+    const loadChatSession = useCallback((sessionId: string, allSessions: SavedChatSession[]) => {
+        logService.info(`Loading chat session: ${sessionId}`);
+        const sessionToLoad = allSessions.find(s => s.id === sessionId);
+        if (sessionToLoad) {
+            setActiveSessionId(sessionToLoad.id);
+            localStorage.setItem(ACTIVE_CHAT_SESSION_ID_KEY, sessionId);
+            setCommandedInput({ text: '', id: Date.now() });
+            setSelectedFiles([]);
+            setEditingMessageId(null);
+        } else {
+            logService.warn(`Session ${sessionId} not found. Starting new chat.`);
+            startNewChat();
+        }
+    }, [setActiveSessionId, setCommandedInput, setSelectedFiles, setEditingMessageId, startNewChat]);
+
+    const loadInitialData = useCallback(() => {
+        try {
+            logService.info('Attempting to load chat history from localStorage.');
+            const storedSessions = localStorage.getItem(CHAT_HISTORY_SESSIONS_KEY);
+            let sessions: SavedChatSession[] = [];
+            if (storedSessions) {
+                try {
+                    const parsed = JSON.parse(storedSessions);
+                    if (Array.isArray(parsed)) {
+                        sessions = parsed;
+                    } else {
+                        logService.warn('Stored chat history is corrupted (not an array). Discarding.');
+                        localStorage.removeItem(CHAT_HISTORY_SESSIONS_KEY);
+                    }
+                } catch (e) {
+                    logService.error('Failed to parse chat history from localStorage. Discarding.', { error: e });
+                    localStorage.removeItem(CHAT_HISTORY_SESSIONS_KEY);
+                }
+            }
+            sessions.sort((a,b) => b.timestamp - a.timestamp);
+            setSavedSessions(sessions);
+
+            const storedGroups = localStorage.getItem(CHAT_HISTORY_GROUPS_KEY);
+            if (storedGroups) {
+                try {
+                    const parsedGroups = JSON.parse(storedGroups);
+                    if (Array.isArray(parsedGroups)) {
+                        setSavedGroups(parsedGroups.map(g => ({...g, isExpanded: g.isExpanded ?? true})));
+                    }
+                } catch (e) {
+                    logService.error('Failed to parse groups from localStorage.', { error: e });
+                }
+            }
+
+            const storedActiveId = localStorage.getItem(ACTIVE_CHAT_SESSION_ID_KEY);
+            if (storedActiveId && sessions.find(s => s.id === storedActiveId)) {
+                loadChatSession(storedActiveId, sessions);
+            } else if (sessions.length > 0) {
+                logService.info('No active session ID, loading most recent session.');
+                loadChatSession(sessions[0].id, sessions);
+            } else {
+                logService.info('No history found, starting fresh chat.');
+                startNewChat();
+            }
+        } catch (error) {
+            logService.error("Error loading chat history:", error);
+            startNewChat();
+        }
+    }, [setSavedSessions, setSavedGroups, loadChatSession, startNewChat]);
+    
+    const handleDeleteChatHistorySession = useCallback((sessionId: string) => {
+        logService.info(`Deleting session: ${sessionId}`);
+        updateAndPersistSessions(prev => {
+             const sessionToDelete = prev.find(s => s.id === sessionId);
+             if (sessionToDelete) {
+                 sessionToDelete.messages.forEach(msg => {
+                     if(msg.isLoading && activeJobs.current.has(msg.id)) {
+                         activeJobs.current.get(msg.id)?.abort();
+                         activeJobs.current.delete(msg.id);
+                     }
+                 });
+             }
+             return prev.filter(s => s.id !== sessionId);
+        });
+        // The logic to switch to a new active session is now handled declaratively in useChat.ts's useEffect.
+    }, [updateAndPersistSessions, activeJobs]);
+    
+    const handleRenameSession = useCallback((sessionId: string, newTitle: string) => {
+        if (!newTitle.trim()) return;
+        logService.info(`Renaming session ${sessionId} to "${newTitle}"`);
+        updateAndPersistSessions(prev =>
+            prev.map(s => (s.id === sessionId ? { ...s, title: newTitle.trim() } : s))
+        );
+    }, [updateAndPersistSessions]);
+
+    const handleTogglePinSession = useCallback((sessionId: string) => {
+        logService.info(`Toggling pin for session ${sessionId}`);
+        updateAndPersistSessions(prev =>
+            prev.map(s => s.id === sessionId ? { ...s, isPinned: !s.isPinned } : s)
+        );
+    }, [updateAndPersistSessions]);
+
+    const handleAddNewGroup = useCallback(() => {
+        logService.info('Adding new group.');
+        const newGroup: ChatGroup = {
+            id: `group-${generateUniqueId()}`,
+            title: t('newGroup_title', 'Untitled'),
+            timestamp: Date.now(),
+            isExpanded: true,
+        };
+        updateAndPersistGroups(prev => [newGroup, ...prev]);
+    }, [updateAndPersistGroups, t]);
+
+    const handleDeleteGroup = useCallback((groupId: string) => {
+        logService.info(`Deleting group: ${groupId}`);
+        updateAndPersistGroups(prev => prev.filter(g => g.id !== groupId));
+        updateAndPersistSessions(prev => prev.map(s => s.groupId === groupId ? { ...s, groupId: null } : s));
+    }, [updateAndPersistGroups, updateAndPersistSessions]);
+
+    const handleRenameGroup = useCallback((groupId: string, newTitle: string) => {
+        if (!newTitle.trim()) return;
+        logService.info(`Renaming group ${groupId} to "${newTitle}"`);
+        updateAndPersistGroups(prev => prev.map(g => g.id === groupId ? { ...g, title: newTitle.trim() } : g));
+    }, [updateAndPersistGroups]);
+    
+    const handleMoveSessionToGroup = useCallback((sessionId: string, groupId: string | null) => {
+        logService.info(`Moving session ${sessionId} to group ${groupId}`);
+        updateAndPersistSessions(prev => prev.map(s => s.id === sessionId ? { ...s, groupId } : s));
+    }, [updateAndPersistSessions]);
+
+    const handleToggleGroupExpansion = useCallback((groupId: string) => {
+        updateAndPersistGroups(prev => prev.map(g => g.id === groupId ? { ...g, isExpanded: !(g.isExpanded ?? true) } : g));
+    }, [updateAndPersistGroups]);
+
+    const clearAllHistory = useCallback(() => {
+        logService.warn('User clearing all chat history.');
+        activeJobs.current.forEach(controller => controller.abort());
+        activeJobs.current.clear();
+        localStorage.removeItem(CHAT_HISTORY_SESSIONS_KEY);
+        localStorage.removeItem(CHAT_HISTORY_GROUPS_KEY);
+        setSavedSessions([]);
+        setSavedGroups([]);
+        startNewChat();
+    }, [setSavedSessions, setSavedGroups, startNewChat, activeJobs]);
+    
+    const clearCacheAndReload = useCallback(() => {
+        clearAllHistory();
+        localStorage.clear();
+        setTimeout(() => window.location.reload(), 50);
+    }, [clearAllHistory]);
+
+    // ========== 聊天记录导入导出功能 ==========
+    
+    const handleExportChatHistory = useCallback(() => {
+        try {
+            const sessionsFromStorage = localStorage.getItem(CHAT_HISTORY_SESSIONS_KEY);
+            const sessions: SavedChatSession[] = sessionsFromStorage ? JSON.parse(sessionsFromStorage) : [];
+            
+            if (sessions.length === 0) {
+                alert('没有可导出的聊天记录');
+                return;
+            }
+
+            // 创建导出数据，包含元数据
+            const exportData = {
+                version: '1.0',
+                exportDate: new Date().toISOString(),
+                totalSessions: sessions.length,
+                chatSessions: sessions
+            };
+
+            const dataStr = JSON.stringify(exportData, null, 2);
+            const dataBlob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(dataBlob);
+            
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `chat-history-${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+            
+            alert(`成功导出 ${sessions.length} 个聊天会话`);
+            logService.info(`Exported ${sessions.length} chat sessions`);
+        } catch (error) {
+            console.error('导出聊天记录失败:', error);
+            alert('导出聊天记录失败');
+        }
+    }, []);
+
+    const handleImportChatHistory = useCallback(() => {
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = '.json';
+        fileInput.style.display = 'none';
+        
+        fileInput.onchange = async (event) => {
+            const file = (event.target as HTMLInputElement).files?.[0];
+            if (!file) return;
+
+            try {
+                const text = await file.text();
+                const importedData = JSON.parse(text);
+                
+                // 验证数据格式
+                let sessions: SavedChatSession[] = [];
+                
+                if (importedData.chatSessions && Array.isArray(importedData.chatSessions)) {
+                    // 新格式：带有元数据的导出文件
+                    sessions = importedData.chatSessions;
+                } else if (Array.isArray(importedData)) {
+                    // 旧格式：直接是会话数组
+                    sessions = importedData;
+                } else {
+                    throw new Error('不支持的文件格式');
+                }
+
+                // 验证会话数据结构
+                const validSessions = sessions.filter(session => 
+                    session && 
+                    typeof session.id === 'string' && 
+                    typeof session.title === 'string' && 
+                    typeof session.timestamp === 'number' &&
+                    Array.isArray(session.messages)
+                );
+
+                if (validSessions.length === 0) {
+                    alert('文件中没有有效的聊天记录');
+                    return;
+                }
+
+                // 获取现有聊天记录
+                const existingSessionsStr = localStorage.getItem(CHAT_HISTORY_SESSIONS_KEY);
+                const existingSessions: SavedChatSession[] = existingSessionsStr ? JSON.parse(existingSessionsStr) : [];
+                
+                // 合并聊天记录，避免重复
+                const existingIds = new Set(existingSessions.map(s => s.id));
+                const newSessions = validSessions.filter(s => !existingIds.has(s.id));
+                
+                if (newSessions.length === 0) {
+                    alert('没有新的聊天记录需要导入（可能已存在）');
+                    return;
+                }
+
+                // 保存合并后的聊天记录
+                const mergedSessions = [...existingSessions, ...newSessions];
+                localStorage.setItem(CHAT_HISTORY_SESSIONS_KEY, JSON.stringify(mergedSessions));
+                
+                // 刷新UI状态
+                setSavedSessions(mergedSessions);
+                
+                alert(`成功导入 ${newSessions.length} 个新的聊天会话`);
+                logService.info(`Imported ${newSessions.length} new chat sessions`);
+                
+            } catch (error) {
+                console.error('导入聊天记录失败:', error);
+                alert('导入聊天记录失败，请检查文件格式');
+            }
+            
+            // 清理文件输入元素
+            document.body.removeChild(fileInput);
+        };
+        
+        document.body.appendChild(fileInput);
+        fileInput.click();
+    }, [setSavedSessions]);
+
+    // 导出聊天记录为文本格式
+    const handleExportChatHistoryAsText = useCallback(() => {
+        try {
+            const sessionsStr = localStorage.getItem(CHAT_HISTORY_SESSIONS_KEY);
+            const sessions: SavedChatSession[] = sessionsStr ? JSON.parse(sessionsStr) : [];
+            
+            if (sessions.length === 0) {
+                alert('没有聊天记录可以导出');
+                return;
+            }
+
+            // 转换为文本格式
+            let textContent = `# 聊天记录导出\n导出时间：${new Date().toLocaleString()}\n总会话数：${sessions.length}\n\n`;
+            
+            sessions.forEach((session, index) => {
+                textContent += `## 会话 ${index + 1}: ${session.title}\n`;
+                textContent += `创建时间：${new Date(session.timestamp).toLocaleString()}\n`;
+                textContent += `消息数量：${session.messages.length}\n\n`;
+                
+                session.messages.forEach((message, msgIndex) => {
+                    const role = message.role === 'user' ? '👤 用户' : '🤖 助手';
+                    textContent += `### ${role} (${msgIndex + 1})\n`;
+                    textContent += `${message.content}\n\n`;
+                    
+                    if (message.role === 'user' && message.files && message.files.length > 0) {
+                        textContent += `📎 附件：${message.files.map(f => f.name).join(', ')}\n\n`;
+                    }
+                });
+                
+                textContent += `---\n\n`;
+            });
+
+            // 下载文本文件
+            const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `chat-history-${new Date().toISOString().split('T')[0]}.txt`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+            
+            logService.info(`Exported ${sessions.length} chat sessions as text`);
+        } catch (error) {
+            console.error('导出聊天记录文本失败:', error);
+            alert('导出聊天记录失败');
+        }
+    }, []);
+
+    // 从文本格式导入聊天记录
+    const handleImportChatHistoryFromText = useCallback(() => {
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = '.txt';
+        fileInput.style.display = 'none';
+        
+        fileInput.onchange = async (event) => {
+            const file = (event.target as HTMLInputElement).files?.[0];
+            if (!file) return;
+            
+            try {
+                const text = await file.text();
+                
+                // 检查是否是我们的导出格式
+                if (!text.includes('# 聊天记录导出') && !text.includes('## 会话')) {
+                    alert('文件格式不正确，请选择通过本应用导出的聊天记录文本文件');
+                    return;
+                }
+                
+                // 简单的文本解析逻辑 - 基于会话分隔符
+                const sessions: SavedChatSession[] = [];
+                
+                // 分割会话：基于 "---" 分隔符
+                const parts = text.split('---');
+                
+                // 第一部分是标题，从第二部分开始处理会话
+                for (let i = 1; i < parts.length; i++) {
+                    const sessionText = parts[i].trim();
+                    if (!sessionText) continue;
+                    
+                    const lines = sessionText.split('\n').filter(line => line.trim());
+                    let sessionTitle = '';
+                    let sessionTimestamp = Date.now();
+                    const messages: ChatMessage[] = [];
+                    
+                    // 解析会话信息
+                    for (let j = 0; j < lines.length; j++) {
+                        const line = lines[j].trim();
+                        
+                        // 解析会话标题
+                        if (line.startsWith('## 会话')) {
+                            const titleMatch = line.match(/## 会话 \d+: (.+)/);
+                            if (titleMatch) {
+                                sessionTitle = titleMatch[1];
+                            }
+                        }
+                        
+                        // 解析创建时间
+                        if (line.startsWith('创建时间：')) {
+                            try {
+                                const timeStr = line.replace('创建时间：', '');
+                                sessionTimestamp = new Date(timeStr).getTime() || Date.now();
+                            } catch {
+                                sessionTimestamp = Date.now();
+                            }
+                        }
+                        
+                        // 解析消息
+                        if (line.startsWith('### 👤 用户') || line.startsWith('### 🤖 助手')) {
+                            const role = line.includes('👤 用户') ? 'user' : 'model';
+                            let content = '';
+                            
+                            // 收集消息内容
+                            for (let k = j + 1; k < lines.length; k++) {
+                                const contentLine = lines[k];
+                                
+                                // 如果遇到下一个消息标题或附件标记，停止
+                                if (contentLine.startsWith('### ') || contentLine.startsWith('📎 附件：')) {
+                                    break;
+                                }
+                                
+                                if (content) content += '\n';
+                                content += contentLine;
+                            }
+                            
+                            if (content.trim()) {
+                                messages.push({
+                                    id: generateUniqueId(),
+                                    role: role as 'user' | 'model',
+                                    content: content.trim(),
+                                    timestamp: new Date(sessionTimestamp),
+                                    files: []
+                                });
+                            }
+                        }
+                    }
+                    
+                    // 创建会话对象
+                    if (sessionTitle && messages.length > 0) {
+                        sessions.push({
+                            id: generateUniqueId(),
+                            title: sessionTitle,
+                            messages,
+                            timestamp: sessionTimestamp,
+                            settings: { ...DEFAULT_CHAT_SETTINGS },
+                            isPinned: false
+                        });
+                    }
+                }
+
+                if (sessions.length === 0) {
+                    alert('文本文件中没有找到有效的聊天记录格式，请确保使用本应用导出的文本文件');
+                    return;
+                }
+
+                // 获取现有聊天记录并合并
+                const existingSessionsStr = localStorage.getItem(CHAT_HISTORY_SESSIONS_KEY);
+                const existingSessions: SavedChatSession[] = existingSessionsStr ? JSON.parse(existingSessionsStr) : [];
+                
+                // 基于标题和时间戳检查重复（文本导入可能没有原始ID）
+                const existingSignatures = new Set(
+                    existingSessions.map(s => `${s.title}-${s.timestamp}`)
+                );
+                
+                const newSessions = sessions.filter(s => 
+                    !existingSignatures.has(`${s.title}-${s.timestamp}`)
+                );
+                
+                if (newSessions.length === 0) {
+                    alert('没有新的聊天记录需要导入（可能已存在类似记录）');
+                    return;
+                }
+
+                // 保存合并后的聊天记录
+                const mergedSessions = [...existingSessions, ...newSessions];
+                localStorage.setItem(CHAT_HISTORY_SESSIONS_KEY, JSON.stringify(mergedSessions));
+                
+                // 刷新UI状态
+                setSavedSessions(mergedSessions);
+                
+                alert(`成功从文本导入 ${newSessions.length} 个聊天会话`);
+                logService.info(`Imported ${newSessions.length} chat sessions from text`);
+                
+            } catch (error) {
+                console.error('从文本导入聊天记录失败:', error);
+                alert('从文本导入聊天记录失败，请检查文件格式是否正确');
+            }
+            
+            // 清理文件输入元素
+            document.body.removeChild(fileInput);
+        };
+                                if (content) content += '\n';
+                                content += nextLine;
+                            }
+                            
+                            if (content.trim()) {
+                                messages.push({
+                                    id: generateUniqueId(),
+                                    role: role as 'user' | 'model',
+                                    content: content.trim(),
+                                    timestamp: new Date(sessionTimestamp),
+                                    files: []
+                                });
+                            }
+                        }
+                    }
+                    
+                    // 创建会话对象
+                    if (sessionTitle && messages.length > 0) {
+                        sessions.push({
+                            id: generateUniqueId(),
+                            title: sessionTitle,
+                            messages,
+                            timestamp: sessionTimestamp,
+                            settings: { ...DEFAULT_CHAT_SETTINGS },
+                            isPinned: false
+                        });
+                    }
+                }
+
+                if (sessions.length === 0) {
+                    alert('文本文件中没有找到有效的聊天记录格式');
+                    return;
+                }
+
+                // 获取现有聊天记录并合并
+                const existingSessionsStr = localStorage.getItem(CHAT_HISTORY_SESSIONS_KEY);
+                const existingSessions: SavedChatSession[] = existingSessionsStr ? JSON.parse(existingSessionsStr) : [];
+                
+                // 基于标题和时间戳检查重复（文本导入可能没有原始ID）
+                const existingSignatures = new Set(
+                    existingSessions.map(s => `${s.title}-${s.timestamp}`)
+                );
+                
+                const newSessions = sessions.filter(s => 
+                    !existingSignatures.has(`${s.title}-${s.timestamp}`)
+                );
+                
+                if (newSessions.length === 0) {
+                    alert('没有新的聊天记录需要导入（可能已存在类似记录）');
+                    return;
+                }
+
+                // 保存合并后的聊天记录
+                const mergedSessions = [...existingSessions, ...newSessions];
+                localStorage.setItem(CHAT_HISTORY_SESSIONS_KEY, JSON.stringify(mergedSessions));
+                
+                // 刷新UI状态
+                setSavedSessions(mergedSessions);
+                
+                alert(`成功从文本导入 ${newSessions.length} 个聊天会话`);
+                logService.info(`Imported ${newSessions.length} chat sessions from text`);
+                
+            } catch (error) {
+                console.error('从文本导入聊天记录失败:', error);
+                alert('从文本导入聊天记录失败，请检查文件格式是否正确');
+            }
+            
+            // 清理文件输入元素
+            document.body.removeChild(fileInput);
+        };
+        
+        document.body.appendChild(fileInput);
+        fileInput.click();
+    }, [setSavedSessions]);
+
+    return {
+        loadInitialData,
+        loadChatSession,
+        startNewChat,
+        handleDeleteChatHistorySession,
+        handleRenameSession,
+        handleTogglePinSession,
+        handleAddNewGroup,
+        handleDeleteGroup,
+        handleRenameGroup,
+        handleMoveSessionToGroup,
+        handleToggleGroupExpansion,
+        clearAllHistory,
+        clearCacheAndReload,
+        handleExportChatHistory,
+        handleImportChatHistory,
+        handleExportChatHistoryAsText,
+        handleImportChatHistoryFromText,
+    };
+}

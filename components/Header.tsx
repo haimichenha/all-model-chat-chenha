@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { Settings, ChevronDown, Check, Loader2, Trash2, Pin, MessagesSquare, Menu, FilePlus2, Wand2, Lock } from 'lucide-react'; 
+import { Settings, ChevronDown, Check, Loader2, Trash2, Pin, MessagesSquare, Menu, FilePlus2, Wand2, Lock, FileText } from 'lucide-react'; 
 import { ModelOption } from '../types';
 import { translations, getResponsiveValue } from '../utils/appUtils';
 
@@ -8,6 +8,7 @@ interface HeaderProps {
   onOpenSettingsModal: () => void; 
   onOpenScenariosModal: () => void; 
   onToggleHistorySidebar: () => void;
+  onOpenLogViewer?: () => void; // Add log viewer functionality
   isLoading: boolean;
   currentModelName?: string;
   availableModels: ModelOption[];
@@ -20,6 +21,9 @@ interface HeaderProps {
   isCanvasPromptActive: boolean; // New prop for canvas prompt status
   t: (key: keyof typeof translations) => string;
   isKeyLocked: boolean;
+  defaultModelId?: string;
+  onSetDefaultModel?: (modelId: string) => void;
+  themeId?: string;
 }
 
 const MOBILE_BREAKPOINT = 640; // Tailwind's sm breakpoint
@@ -29,6 +33,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettingsModal, 
   onOpenScenariosModal,
   onToggleHistorySidebar,
+  onOpenLogViewer,
   isLoading,
   currentModelName,
   availableModels,
@@ -212,6 +217,14 @@ export const Header: React.FC<HeaderProps> = ({
           title={t('scenariosManage_title')}
         >
           <MessagesSquare size={getResponsiveValue(16, 18)} />
+        </button>
+        <button
+          onClick={onOpenLogViewer}
+          className="p-2 sm:p-2.5 bg-[var(--theme-bg-tertiary)] hover:bg-[var(--theme-bg-input)] text-[var(--theme-icon-settings)] rounded-lg shadow transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[var(--theme-bg-primary)] focus:ring-[var(--theme-border-focus)] flex items-center justify-center hover:scale-105 active:scale-100"
+          aria-label="打开日志查看器"
+          title="查看系统日志和网络记录"
+        >
+          <FileText size={getResponsiveValue(16, 18)} />
         </button>
         <button
           onClick={onOpenSettingsModal} 

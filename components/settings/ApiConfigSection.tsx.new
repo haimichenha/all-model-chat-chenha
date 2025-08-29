@@ -1,0 +1,465 @@
+import React, { useState, useEffect } from 'react';
+import { KeyRound, Info, Plus, Trash2, Check, ArrowUpDown, Save, EyeOff, Eye, AlertCircle } from 'lucide-react';
+import { getResponsiveValue } from '../../utils/appUtils';
+import { ApiConfig } from '../../types';
+import { translations } from '../../utils/appUtils';
+import { v4 as uuidv4 } from 'uuid';
+
+interface ApiConfigSectionProps {
+  useCustomApiConfig: boolean;
+  setUseCustomApiConfig: (value: boolean) => void;
+  apiKey: string | null;
+  setApiKey: (value: string | null) => void;
+  apiProxyUrl: string | null;
+  setApiProxyUrl: (value: string | null) => void;
+  apiConfigs: ApiConfig[];
+  setApiConfigs: (configs: ApiConfig[]) => void;
+  selectedApiConfigId: string | null;
+  setSelectedApiConfigId: (id: string | null) => void;
+  persistentStore: any;
+  setPersistentStore: (store: any) => void;
+  t: (key: keyof typeof translations) => string;
+}
+
+export const ApiConfigSection: React.FC<ApiConfigSectionProps> = ({
+  useCustomApiConfig,
+  setUseCustomApiConfig,
+  apiKey,
+  setApiKey,
+  apiProxyUrl,
+  setApiProxyUrl,
+  apiConfigs,
+  setApiConfigs,
+  selectedApiConfigId,
+  setSelectedApiConfigId,
+  persistentStore,
+  setPersistentStore,
+  t,
+}) => {
+  const [isApiKeyFocused, setIsApiKeyFocused] = useState(false);
+  const [showPersistentStore, setShowPersistentStore] = useState(false);
+  const [editingApiConfigId, setEditingApiConfigId] = useState<string | null>(null);
+  const [newConfigName, setNewConfigName] = useState("");
+  const [newConfigApiKey, setNewConfigApiKey] = useState("");
+  const [newConfigProxyUrl, setNewConfigProxyUrl] = useState("");
+  const [persistentApiText, setPersistentApiText] = useState("");
+  const [persistentPromptsText, setPersistentPromptsText] = useState("");
+  const [showApiKeys, setShowApiKeys] = useState(false);
+
+  // 初始化持久化存储
+  useEffect(() => {
+    if (!persistentStore || !persistentStore.apiConfigs) {
+      setPersistentStore({
+        apiConfigs: [],
+        systemPrompts: [],
+        lastSelectedApiConfigId: null
+      });
+    }
+
+    if (persistentStore) {
+      setPersistentApiText(JSON.stringify(persistentStore.apiConfigs || [], null, 2));
+      setPersistentPromptsText(JSON.stringify(persistentStore.systemPrompts || [], null, 2));
+    }
+  }, []);
+
+  // 更新当前API和代理URL，基于选定的配置
+  useEffect(() => {
+    if (useCustomApiConfig && selectedApiConfigId) {
+      const selectedConfig = apiConfigs.find(c => c.id === selectedApiConfigId);
+      if (selectedConfig) {
+        setApiKey(selectedConfig.apiKey);
+        setApiProxyUrl(selectedConfig.proxyUrl);
+      }
+    }
+  }, [selectedApiConfigId, apiConfigs, useCustomApiConfig]);
+
+  const handleSavePersistentApiConfigs = () => {
+    try {
+      const parsedConfigs = JSON.parse(persistentApiText);
+      setPersistentStore({
+        ...persistentStore,
+        apiConfigs: parsedConfigs
+      });
+      alert("API配置已保存到持久存储");
+    } catch (error) {
+      alert("无效的JSON格式");
+    }
+  };
+
+  const handleSavePersistentPrompts = () => {
+    try {
+      const parsedPrompts = JSON.parse(persistentPromptsText);
+      setPersistentStore({
+        ...persistentStore,
+        systemPrompts: parsedPrompts
+      });
+      alert("提示词已保存到持久存储");
+    } catch (error) {
+      alert("无效的JSON格式");
+    }
+  };
+
+  const addNewApiConfig = () => {
+    const newConfig: ApiConfig = {
+      id: uuidv4(),
+      name: newConfigName || `配置 ${apiConfigs.length + 1}`,
+      apiKey: newConfigApiKey,
+      proxyUrl: newConfigProxyUrl
+    };
+
+    const updatedConfigs = [...apiConfigs, newConfig];
+    setApiConfigs(updatedConfigs);
+    setSelectedApiConfigId(newConfig.id);
+    
+    // 清空表单
+    setNewConfigName("");
+    setNewConfigApiKey("");
+    setNewConfigProxyUrl("");
+
+    // 同时更新持久化存储
+    setPersistentStore({
+      ...persistentStore,
+      apiConfigs: [...(persistentStore.apiConfigs || []), newConfig],
+      lastSelectedApiConfigId: newConfig.id
+    });
+  };
+
+  const deleteApiConfig = (id: string) => {
+    const updatedConfigs = apiConfigs.filter(config => config.id !== id);
+    setApiConfigs(updatedConfigs);
+    
+    // 如果删除的是当前选中的配置，则选择第一个配置或者清空
+    if (selectedApiConfigId === id) {
+      setSelectedApiConfigId(updatedConfigs.length > 0 ? updatedConfigs[0].id : null);
+    }
+
+    // 同时更新持久化存储
+    setPersistentStore({
+      ...persistentStore,
+      apiConfigs: persistentStore.apiConfigs.filter((c: ApiConfig) => c.id !== id),
+      lastSelectedApiConfigId: selectedApiConfigId === id ? 
+        (updatedConfigs.length > 0 ? updatedConfigs[0].id : null) : 
+        persistentStore.lastSelectedApiConfigId
+    });
+  };
+
+  const selectApiConfig = (id: string) => {
+    setSelectedApiConfigId(id);
+    const selectedConfig = apiConfigs.find(c => c.id === id);
+    if (selectedConfig) {
+      setApiKey(selectedConfig.apiKey);
+      setApiProxyUrl(selectedConfig.proxyUrl);
+    }
+
+    // 更新持久化存储的最后选择
+    setPersistentStore({
+      ...persistentStore,
+      lastSelectedApiConfigId: id
+    });
+  };
+
+  // 从持久化存储导入配置
+  const importFromPersistent = () => {
+    if (persistentStore && persistentStore.apiConfigs && persistentStore.apiConfigs.length > 0) {
+      setApiConfigs(persistentStore.apiConfigs);
+      
+      // 如果有上次选择的配置ID，则选择它
+      if (persistentStore.lastSelectedApiConfigId) {
+        setSelectedApiConfigId(persistentStore.lastSelectedApiConfigId);
+        const selectedConfig = persistentStore.apiConfigs.find(
+          (c: ApiConfig) => c.id === persistentStore.lastSelectedApiConfigId
+        );
+        if (selectedConfig) {
+          setApiKey(selectedConfig.apiKey);
+          setApiProxyUrl(selectedConfig.proxyUrl);
+        }
+      } else if (persistentStore.apiConfigs.length > 0) {
+        // 否则选择第一个配置
+        setSelectedApiConfigId(persistentStore.apiConfigs[0].id);
+        setApiKey(persistentStore.apiConfigs[0].apiKey);
+        setApiProxyUrl(persistentStore.apiConfigs[0].proxyUrl);
+      }
+    }
+  };
+
+  const inputBaseClasses = "w-full p-2 border rounded-md focus:ring-2 focus:border-[var(--theme-border-focus)] text-[var(--theme-text-primary)] placeholder-[var(--theme-text-tertiary)] text-sm custom-scrollbar";
+  const enabledInputClasses = "bg-[var(--theme-bg-input)] border-[var(--theme-border-secondary)] focus:ring-[var(--theme-border-focus)]";
+  const disabledInputClasses = "bg-[var(--theme-bg-secondary)] border-[var(--theme-border-primary)] opacity-60 cursor-not-allowed";
+  const iconSize = getResponsiveValue(14, 16);
+
+  const apiKeyBlurClass = !isApiKeyFocused && useCustomApiConfig && apiKey && !showApiKeys ? 'text-transparent [text-shadow:0_0_5px_var(--theme-text-primary)]' : '';
+
+  return (
+    <div className="space-y-3 p-3 sm:p-4 border border-[var(--theme-border-secondary)] rounded-lg bg-[var(--theme-bg-secondary)]">
+      <h3 className="text-sm font-semibold text-[var(--theme-text-primary)] flex items-center mb-2">
+        <KeyRound size={iconSize} className="mr-2 text-[var(--theme-text-link)] opacity-80" />
+        {t('settingsApiConfig')}
+      </h3>
+
+      <label htmlFor="use-custom-api-config-toggle" className="flex items-center justify-between py-1 cursor-pointer">
+        <span className="text-sm font-medium text-[var(--theme-text-secondary)]">
+          {t('settingsUseCustomApi')}
+        </span>
+        <div className="relative">
+          <input
+            id="use-custom-api-config-toggle"
+            type="checkbox"
+            className="sr-only peer"
+            checked={useCustomApiConfig}
+            onChange={() => setUseCustomApiConfig(!useCustomApiConfig)}
+          />
+          <div className="w-11 h-6 bg-[var(--theme-bg-input)] rounded-full peer peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-offset-2 peer-focus:ring-offset-[var(--theme-bg-secondary)] peer-focus:ring-[var(--theme-border-focus)] peer-checked:bg-[var(--theme-bg-accent)] transition-colors duration-200 ease-in-out"></div>
+          <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transform transition-transform duration-200 ease-in-out peer-checked:translate-x-5"></div>
+        </div>
+      </label>
+
+      {!useCustomApiConfig && (
+        <p className="text-xs text-[var(--theme-text-tertiary)] flex items-center bg-[var(--theme-bg-info)] bg-opacity-30 p-2 rounded-md border border-[var(--theme-border-secondary)]">
+          <Info size={14} className="mr-2 flex-shrink-0 text-[var(--theme-text-info)]" />
+          {t('apiConfig_default_info')}
+        </p>
+      )}
+      
+      {/* API配置管理器 */}
+      {useCustomApiConfig && (
+        <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border-primary)] rounded-lg p-3">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-sm font-medium text-[var(--theme-text-primary)]">API配置管理</h4>
+            <button 
+              className="flex items-center text-xs text-[var(--theme-text-link)] hover:underline"
+              onClick={() => setShowApiKeys(!showApiKeys)}
+            >
+              {showApiKeys ? <EyeOff size={14} className="mr-1" /> : <Eye size={14} className="mr-1" />}
+              {showApiKeys ? "隐藏API密钥" : "显示API密钥"}
+            </button>
+          </div>
+
+          {/* 已有配置列表 */}
+          <div className="mb-4 max-h-[200px] overflow-y-auto custom-scrollbar">
+            {apiConfigs.length === 0 ? (
+              <div className="text-sm text-[var(--theme-text-tertiary)] p-2 bg-[var(--theme-bg-info)] bg-opacity-20 rounded flex items-center">
+                <AlertCircle size={14} className="mr-2 text-[var(--theme-text-info)]" />
+                未配置任何API。请添加新配置或从持久存储导入。
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {apiConfigs.map((config) => (
+                  <div 
+                    key={config.id} 
+                    className={`p-2 rounded-md border cursor-pointer ${
+                      selectedApiConfigId === config.id 
+                        ? 'border-[var(--theme-border-focus)] bg-[var(--theme-bg-accent)] bg-opacity-10' 
+                        : 'border-[var(--theme-border-primary)] hover:bg-[var(--theme-bg-tertiary)]'
+                    }`}
+                    onClick={() => selectApiConfig(config.id)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center">
+                        {selectedApiConfigId === config.id && (
+                          <Check size={14} className="mr-2 text-[var(--theme-text-link)]" />
+                        )}
+                        <span className="text-sm font-medium text-[var(--theme-text-primary)]">{config.name}</span>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteApiConfig(config.id);
+                        }}
+                        className="text-[var(--theme-text-error)] hover:text-[var(--theme-text-error-hover)] p-1"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    <div className="mt-1 text-xs text-[var(--theme-text-tertiary)]">
+                      <div className="truncate">
+                        API密钥: {showApiKeys ? config.apiKey : '••••••••••••••••••'}
+                      </div>
+                      <div className="truncate">
+                        代理URL: {config.proxyUrl || '(无代理)'}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 添加新配置表单 */}
+          <div className="bg-[var(--theme-bg-tertiary)] p-3 rounded-lg mb-3">
+            <h5 className="text-sm font-medium text-[var(--theme-text-primary)] mb-2">添加新配置</h5>
+            <div className="space-y-2">
+              <div>
+                <label className="block text-xs text-[var(--theme-text-secondary)] mb-1">名称</label>
+                <input
+                  type="text"
+                  value={newConfigName}
+                  onChange={(e) => setNewConfigName(e.target.value)}
+                  placeholder="配置名称"
+                  className={`${inputBaseClasses} ${enabledInputClasses}`}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-[var(--theme-text-secondary)] mb-1">API密钥</label>
+                <textarea
+                  rows={2}
+                  value={newConfigApiKey}
+                  onChange={(e) => setNewConfigApiKey(e.target.value)}
+                  placeholder="输入API密钥"
+                  className={`${inputBaseClasses} ${enabledInputClasses} resize-y min-h-[50px]`}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-[var(--theme-text-secondary)] mb-1">代理URL (可选)</label>
+                <input
+                  type="text"
+                  value={newConfigProxyUrl}
+                  onChange={(e) => setNewConfigProxyUrl(e.target.value)}
+                  placeholder="例如: http://localhost:3000/v1beta"
+                  className={`${inputBaseClasses} ${enabledInputClasses}`}
+                />
+              </div>
+              <button
+                onClick={addNewApiConfig}
+                disabled={!newConfigApiKey}
+                className="flex items-center justify-center px-3 py-1.5 bg-[var(--theme-bg-accent)] hover:bg-[var(--theme-bg-accent-hover)] text-[var(--theme-text-accent)] rounded-md disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+              >
+                <Plus size={14} className="mr-1" /> 添加配置
+              </button>
+            </div>
+          </div>
+
+          {/* 从持久存储导入按钮 */}
+          <div className="flex justify-end">
+            <button
+              onClick={importFromPersistent}
+              className="flex items-center text-xs text-[var(--theme-text-link)] hover:underline"
+            >
+              <ArrowUpDown size={14} className="mr-1" /> 从持久存储导入配置
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 当前选中的API配置 */}
+      <div className={`space-y-4 ${!useCustomApiConfig ? 'opacity-50' : ''}`}>
+        <div>
+            <label htmlFor="api-key-input" className="flex justify-between items-center text-xs font-medium text-[var(--theme-text-secondary)] mb-1.5">
+              <span>{t('settingsApiKey')}</span>
+              <button 
+                className="flex items-center text-xs text-[var(--theme-text-link)] hover:underline"
+                onClick={() => setShowApiKeys(!showApiKeys)}
+              >
+                {showApiKeys ? <EyeOff size={14} className="mr-1" /> : <Eye size={14} className="mr-1" />}
+                {showApiKeys ? "隐藏" : "显示"}
+              </button>
+            </label>
+            <textarea
+              id="api-key-input"
+              rows={3}
+              value={apiKey || ''}
+              onChange={(e) => setApiKey(e.target.value || null)}
+              onFocus={() => setIsApiKeyFocused(true)}
+              onBlur={() => setIsApiKeyFocused(false)}
+              className={`${inputBaseClasses} ${useCustomApiConfig ? enabledInputClasses : disabledInputClasses} resize-y min-h-[60px] transition-all duration-200 ease-in-out ${apiKeyBlurClass}`}
+              placeholder={useCustomApiConfig ? t('apiConfig_key_placeholder') : t('apiConfig_key_placeholder_disabled')}
+              aria-label="Gemini API Key input"
+              disabled={!useCustomApiConfig}
+            />
+            {useCustomApiConfig && (
+              <p className="text-xs text-[var(--theme-text-tertiary)] mt-1.5">
+                {t('settingsApiKeyHelpText')}
+              </p>
+            )}
+        </div>
+        <div>
+          <label htmlFor="api-proxy-url-input" className="block text-xs font-medium text-[var(--theme-text-secondary)] mb-1.5">API Proxy URL (可选)</label>
+          <input
+            id="api-proxy-url-input"
+            type="text"
+            value={apiProxyUrl || ''}
+            onChange={(e) => setApiProxyUrl(e.target.value || null)}
+            className={`${inputBaseClasses} ${useCustomApiConfig ? enabledInputClasses : disabledInputClasses}`}
+            placeholder={useCustomApiConfig ? 'e.g., http://localhost:3000/v1beta' : 'Enable custom config to set proxy'}
+            aria-label="API Proxy URL"
+            disabled={!useCustomApiConfig}
+          />
+          {useCustomApiConfig && (
+            <p className="text-xs text-[var(--theme-text-tertiary)] mt-1.5">
+              Replaces <code>https://generativelanguage.googleapis.com/v1beta</code> for API calls.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* 持久化存储区域 */}
+      <div className="mt-4 pt-3 border-t border-[var(--theme-border-primary)]">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-sm font-semibold text-[var(--theme-text-primary)]">持久化存储</h4>
+          <button 
+            onClick={() => setShowPersistentStore(!showPersistentStore)}
+            className="text-xs flex items-center text-[var(--theme-text-link)]"
+          >
+            {showPersistentStore ? <EyeOff size={14} className="mr-1" /> : <Eye size={14} className="mr-1" />}
+            {showPersistentStore ? "隐藏" : "显示"}
+          </button>
+        </div>
+        
+        {showPersistentStore && (
+          <div className="space-y-4 bg-[var(--theme-bg-tertiary)] p-3 rounded-lg">
+            {/* API配置持久化 */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-medium text-[var(--theme-text-secondary)]">API配置 (JSON)</label>
+                <div className="flex space-x-2">
+                  <button 
+                    onClick={handleSavePersistentApiConfigs} 
+                    className="flex items-center text-xs px-2 py-0.5 bg-[var(--theme-bg-accent)] text-[var(--theme-text-accent)] rounded"
+                  >
+                    <Save size={12} className="mr-1" /> 保存
+                  </button>
+                </div>
+              </div>
+              <textarea 
+                value={persistentApiText}
+                onChange={(e) => setPersistentApiText(e.target.value)}
+                rows={5}
+                className={`${inputBaseClasses} ${enabledInputClasses} resize-y`}
+                placeholder="[{\"id\": \"uuid\", \"name\": \"配置名\", \"apiKey\": \"你的API密钥\", \"proxyUrl\": \"代理URL\"}]"
+              />
+            </div>
+            
+            {/* 提示词持久化 */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-medium text-[var(--theme-text-secondary)]">系统提示词 (JSON)</label>
+                <button 
+                  onClick={handleSavePersistentPrompts}
+                  className="flex items-center text-xs px-2 py-0.5 bg-[var(--theme-bg-accent)] text-[var(--theme-text-accent)] rounded"
+                >
+                  <Save size={12} className="mr-1" /> 保存
+                </button>
+              </div>
+              <textarea 
+                value={persistentPromptsText}
+                onChange={(e) => setPersistentPromptsText(e.target.value)}
+                rows={5}
+                className={`${inputBaseClasses} ${enabledInputClasses} resize-y`}
+                placeholder="[\"提示词1\", \"提示词2\"]"
+              />
+            </div>
+            
+            <p className="text-xs text-[var(--theme-text-info)] bg-[var(--theme-bg-info)] bg-opacity-20 p-2 rounded">
+              <Info size={14} className="inline-block mr-1" />
+              持久化存储不会随清除缓存而清除，保持您的API配置和提示词安全。
+            </p>
+          </div>
+        )}
+        {!showPersistentStore && (
+          <p className="text-xs text-[var(--theme-text-tertiary)] bg-[var(--theme-bg-tertiary)] p-2 rounded">
+            持久化存储可以保留您的API密钥、代理URL和系统提示词，防止被缓存清除。点击"显示"来管理存储内容。
+          </p>
+        )}
+      </div>
+    </div>
+  );
+};

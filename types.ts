@@ -1,5 +1,5 @@
-import { Chat, Part, File as GeminiFile, UsageMetadata } from "@google/genai";
-import { Theme, ThemeColors } from './constants/themeConstants'; 
+import { Part, File as GeminiFile, UsageMetadata } from "@google/genai";
+import { ThemeColors } from './constants/themeConstants'; 
 import { translations } from "./utils/appUtils";
 
 export type { ThemeColors };
@@ -32,6 +32,10 @@ export interface ChatMessage {
   timestamp: Date;
   thoughts?: string; 
   isLoading?: boolean; 
+  isSummary?: boolean; // Added to identify summary messages
+  isChunkedProcessing?: boolean; // Added to identify chunked processing messages
+  chunkIndex?: number; // Index of the chunk being processed
+  totalChunks?: number; // Total number of chunks
   generationStartTime?: Date; 
   generationEndTime?: Date;
   thinkingTimeMs?: number;   
@@ -41,6 +45,8 @@ export interface ChatMessage {
   cumulativeTotalTokens?: number; // Added for cumulative token count
   audioSrc?: string; // For TTS responses
   groundingMetadata?: any;
+  suggestions?: string[]; // For follow-up suggestions
+  isGeneratingSuggestions?: boolean; // Loading state for suggestions
 }
 
 export interface ModelOption {
@@ -78,6 +84,39 @@ export interface ChatSettings {
   lockedApiKey?: string | null;
   isGoogleSearchEnabled?: boolean;
   isCodeExecutionEnabled?: boolean;
+  isUrlContextEnabled?: boolean;
+}
+
+// API配置接口
+export interface ApiConfig {
+  id: string;
+  name: string;
+  apiKey: string;
+  apiProxyUrl?: string | null;
+  isDefault?: boolean;
+}
+
+// 系统提示接口
+export interface SystemPrompt {
+  id: string;
+  name: string;
+  prompt: string;
+  isDefault?: boolean;
+}
+
+// 持久化存储接口
+export interface PersistentStore {
+  apiConfigs: ApiConfig[];
+  systemPrompts: SystemPrompt[];
+  lastSelectedApiConfigId: string | null;
+}
+
+export interface ChatGroup {
+  id: string;
+  title: string;
+  timestamp: number;
+  isPinned?: boolean;
+  isExpanded?: boolean;
 }
 
 export interface SavedChatSession {
@@ -87,21 +126,33 @@ export interface SavedChatSession {
   messages: ChatMessage[];
   settings: ChatSettings;
   isPinned?: boolean;
+  isImported?: boolean; // Added to identify imported sessions
+  groupId?: string | null;
 }
 
-
 export interface AppSettings extends ChatSettings {
- themeId: string; 
+ themeId: 'system' | 'onyx' | 'pearl'; 
  baseFontSize: number; 
  useCustomApiConfig: boolean;
+ // 当前活跃的API配置（从持久化存储中加载的当前选中配置）
  apiKey: string | null;
  apiProxyUrl: string | null;
+ // 新增的配置管理字段
+ apiConfigs: ApiConfig[];
+ activeApiConfigId: string | null;
+ systemPrompts: SystemPrompt[];
+ activeSystemPromptId: string | null;
  language: 'en' | 'zh' | 'system';
  isStreamingEnabled: boolean;
  transcriptionModelId: string;
  isTranscriptionThinkingEnabled: boolean;
  useFilesApiForImages: boolean;
  expandCodeBlocksByDefault: boolean;
+ isAutoTitleEnabled?: boolean;
+ isMermaidRenderingEnabled?: boolean;
+ isGraphvizRenderingEnabled?: boolean;
+ isCompletionNotificationEnabled?: boolean;
+ isSuggestionsEnabled?: boolean;
 }
 
 
@@ -119,6 +170,7 @@ export interface GeminiService {
     thinkingBudget: number,
     isGoogleSearchEnabled: boolean,
     isCodeExecutionEnabled: boolean,
+    isUrlContextEnabled: boolean,
     abortSignal: AbortSignal,
     onPart: (part: Part) => void,
     onThoughtChunk: (chunk: string) => void,
@@ -135,6 +187,7 @@ export interface GeminiService {
     thinkingBudget: number,
     isGoogleSearchEnabled: boolean,
     isCodeExecutionEnabled: boolean,
+    isUrlContextEnabled: boolean,
     abortSignal: AbortSignal,
     onError: (error: Error) => void,
     onComplete: (parts: Part[], thoughtsText?: string, usageMetadata?: UsageMetadata, groundingMetadata?: any) => void
@@ -142,6 +195,19 @@ export interface GeminiService {
   generateImages: (apiKey: string, modelId: string, prompt: string, aspectRatio: string, abortSignal: AbortSignal) => Promise<string[]>;
   generateSpeech: (apiKey: string, modelId: string, text: string, voice: string, abortSignal: AbortSignal) => Promise<string>;
   transcribeAudio: (apiKey: string, audioFile: File, modelId: string, isThinkingEnabled: boolean) => Promise<string>;
+  processTextInChunks: (
+    apiKey: string,
+    modelId: string,
+    text: string,
+    systemInstruction: string,
+    config: { temperature?: number; topP?: number },
+    abortSignal: AbortSignal,
+    onChunkProcessed: (chunkIndex: number, totalChunks: number, summary: string) => void,
+    onComplete: (finalSummary: string) => void,
+    onError: (error: Error) => void
+  ) => Promise<void>;
+  generateTitle?: (apiKey: string, userContent: string, modelContent: string, language: string) => Promise<string>;
+  generateSuggestions?: (apiKey: string, userContent: string, modelContent: string, language: string) => Promise<string[]>;
 }
 
 export interface ThoughtSupportingPart extends Part {
@@ -150,10 +216,8 @@ export interface ThoughtSupportingPart extends Part {
 
 export interface MessageListProps {
   messages: ChatMessage[];
-
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
- scrollContainerRef: React.RefObject<HTMLDivElement | null>;
- 
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
   onScrollContainerScroll: () => void;
   onEditMessage: (messageId: string) => void;
   onDeleteMessage: (messageId: string) => void;
@@ -163,11 +227,17 @@ export interface MessageListProps {
   themeId: string;
   baseFontSize: number;
   expandCodeBlocksByDefault: boolean;
+  isMermaidRenderingEnabled?: boolean;
+  isGraphvizRenderingEnabled?: boolean;
   onSuggestionClick?: (suggestion: string) => void;
+  onFollowUpSuggestionClick?: (suggestion: string) => void;
   onTextToSpeech: (messageId: string, text: string) => void;
   ttsMessageId: string | null;
   t: (key: keyof typeof translations, fallback?: string) => string;
   language: 'en' | 'zh';
+  scrollNavVisibility?: { up: boolean, down: boolean };
+  onScrollToPrevTurn?: () => void;
+  onScrollToNextTurn?: () => void;
   showScrollToBottom?: boolean;
   onScrollToBottom?: () => void;
 }
@@ -182,4 +252,219 @@ export interface SavedScenario {
   id: string;
   title: string;
   messages: PreloadedMessage[];
+}
+
+export type AttachmentAction = 'upload' | 'gallery' | 'video' | 'camera' | 'recorder' | 'id' | 'text';
+
+export interface ChatInputActionsProps {
+  onAttachmentAction: (action: AttachmentAction) => void;
+  disabled: boolean;
+  isGoogleSearchEnabled: boolean;
+  onToggleGoogleSearch: () => void;
+  isCodeExecutionEnabled: boolean;
+  onToggleCodeExecution: () => void;
+  isUrlContextEnabled: boolean;
+  onToggleUrlContext: () => void;
+  onRecordButtonClick: () => void;
+  isRecording?: boolean;
+  isMicInitializing?: boolean;
+  isTranscribing: boolean;
+  isLoading: boolean;
+  onStopGenerating: () => void;
+  isEditing: boolean;
+  onCancelEdit: () => void;
+  canSend: boolean;
+  isWaitingForUpload: boolean;
+  t: (key: keyof typeof translations | string) => string;
+  onCancelRecording: () => void;
+}
+
+// 当用户选择了一个新的活动配置时，调用此函数通知父组件
+export interface ApiConfigSectionProps {
+  onActiveConfigChange: (newConfig: ApiConfig | null) => void;
+  // 是否使用自定义API配置
+  useCustomApiConfig: boolean;
+  setUseCustomApiConfig: (value: boolean) => void;
+  // 当前激活的配置ID，用于高亮显示
+  activeApiConfigId: string | null;
+  // 刷新触发器，用于强制刷新组件
+  refreshTrigger?: number;
+  // 翻译函数
+  t: (key: keyof typeof translations | string) => string;
+}
+
+export interface ApiConfigManagerProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onApiConfigChange: (config: ApiConfig | null) => void;
+  currentApiConfigId?: string;
+}
+
+export interface CommandInfo {
+    name: string;
+    description: string;
+}
+
+export interface ChatInputModalsProps {
+  showCamera: boolean;
+  onPhotoCapture: (file: File) => void;
+  onCameraCancel: () => void;
+  showRecorder: boolean;
+  onAudioRecord: (file: File) => Promise<void>;
+  onRecorderCancel: () => void;
+  showCreateTextFileEditor: boolean;
+  onConfirmCreateTextFile: (content: string, filename: string) => Promise<void>;
+  onCreateTextFileCancel: () => void;
+  isHelpModalOpen: boolean;
+  onHelpModalClose: () => void;
+  allCommandsForHelp: CommandInfo[];
+  isProcessingFile: boolean;
+  isLoading: boolean;
+  t: (key: keyof typeof translations) => string;
+}
+
+export interface ChatInputToolbarProps {
+  isImagenModel: boolean;
+  aspectRatio?: string;
+  setAspectRatio?: (ratio: string) => void;
+  fileError: string | null;
+  selectedFiles: UploadedFile[];
+  onRemoveFile: (fileId: string) => void;
+  onCancelUpload: (fileId: string) => void;
+  showAddByIdInput: boolean;
+  fileIdInput: string;
+  setFileIdInput: (value: string) => void;
+  onAddFileByIdSubmit: () => Promise<void>;
+  onCancelAddById: () => void;
+  isAddingById: boolean;
+  isLoading: boolean;
+  t: (key: keyof typeof translations) => string;
+}
+
+export interface AppModalsProps {
+  isSettingsModalOpen: boolean;
+  setIsSettingsModalOpen: (isOpen: boolean) => void;
+  appSettings: AppSettings;
+  availableModels: ModelOption[];
+  handleSaveSettings: (newSettings: AppSettings) => void;
+  isModelsLoading: boolean;
+  modelsLoadingError: string | null;
+  clearCacheAndReload: () => void;
+  handleInstallPwa: () => void;
+  installPromptEvent: any;
+  isStandalone: boolean;
+  handleImportSettings: (file: File) => void;
+  handleExportSettings: (includeHistory: boolean) => void;
+  onPersistentStoreImportSuccess?: (newStore: PersistentStore) => void;
+  
+  // API配置管理
+  activeApiConfig: ApiConfig | null;
+  handleActiveApiConfigChange: (newConfig: ApiConfig | null) => void;
+  refreshTrigger: number;
+  
+  isPreloadedMessagesModalOpen: boolean;
+  setIsPreloadedMessagesModalOpen: (isOpen: boolean) => void;
+  savedScenarios: SavedScenario[];
+  handleSaveAllScenarios: (scenarios: SavedScenario[]) => void;
+  handleLoadPreloadedScenario: (messages: PreloadedMessage[]) => void;
+  handleImportPreloadedScenario: (file: File) => Promise<SavedScenario | null>;
+  handleExportPreloadedScenario: (scenario: SavedScenario) => void;
+
+  isExportModalOpen: boolean;
+  setIsExportModalOpen: (isOpen: boolean) => void;
+  handleExportChat: (format: 'png' | 'html' | 'txt') => Promise<void>;
+  exportStatus: 'idle' | 'exporting';
+  
+  isLogViewerOpen: boolean;
+  setIsLogViewerOpen: (isOpen: boolean | ((prev: boolean) => boolean)) => void;
+  currentChatSettings: ChatSettings;
+
+  t: (key: keyof typeof translations, fallback?: string) => string;
+}
+
+export interface ChatAreaProps {
+  // Drag & Drop
+  isAppDraggingOver: boolean;
+  handleAppDragEnter: (e: React.DragEvent) => void;
+  handleAppDragOver: (e: React.DragEvent) => void;
+  handleAppDragLeave: (e: React.DragEvent) => void;
+  handleAppDrop: (e: React.DragEvent) => void;
+
+  // Header Props
+  onNewChat: () => void;
+  onOpenSettingsModal: () => void;
+  onOpenScenariosModal: () => void;
+  onToggleHistorySidebar: () => void;
+  isLoading: boolean;
+  currentModelName: string;
+  availableModels: ModelOption[];
+  selectedModelId: string;
+  onSelectModel: (modelId: string) => void;
+  isModelsLoading: boolean;
+  isSwitchingModel: boolean;
+  isHistorySidebarOpen: boolean;
+  onLoadCanvasPrompt: () => void;
+  isCanvasPromptActive: boolean;
+  isKeyLocked: boolean;
+  defaultModelId: string;
+  onSetDefaultModel: (modelId: string) => void;
+  themeId: string;
+  modelsLoadingError: string | null;
+
+  // MessageList Props
+  messages: ChatMessage[];
+  messagesEndRef: React.RefObject<HTMLDivElement>;
+  scrollContainerRef: React.RefObject<HTMLDivElement>;
+  onScrollContainerScroll: () => void;
+  onEditMessage: (messageId: string) => void;
+  onDeleteMessage: (messageId: string) => void;
+  onRetryMessage: (messageId: string) => void;
+  showThoughts: boolean;
+  themeColors: ThemeColors;
+  baseFontSize: number;
+  expandCodeBlocksByDefault: boolean;
+  isMermaidRenderingEnabled: boolean;
+  isGraphvizRenderingEnabled: boolean;
+  onSuggestionClick?: (suggestion: string) => void;
+  onFollowUpSuggestionClick?: (suggestion: string) => void;
+  onTextToSpeech: (messageId: string, text: string) => void;
+  ttsMessageId: string | null;
+  language: 'en' | 'zh';
+  scrollNavVisibility: { up: boolean, down: boolean };
+  onScrollToPrevTurn: () => void;
+  onScrollToNextTurn: () => void;
+
+  // ChatInput Props
+  appSettings: AppSettings;
+  commandedInput: { text: string; id: number } | null;
+  onMessageSent: () => void;
+  selectedFiles: UploadedFile[];
+  setSelectedFiles: (files: UploadedFile[] | ((prevFiles: UploadedFile[]) => UploadedFile[])) => void;
+  onSendMessage: (text: string) => void;
+  isEditing: boolean;
+  onStopGenerating: () => void;
+  onCancelEdit: () => void;
+  onProcessFiles: (files: FileList | File[]) => Promise<void>;
+  onAddFileById: (fileId: string) => Promise<void>;
+  onCancelUpload: (fileId: string) => void;
+  onTranscribeAudio: (file: File) => Promise<string | null>;
+  isProcessingFile: boolean;
+  fileError: string | null;
+  isImagenModel?: boolean;
+  aspectRatio?: string;
+  setAspectRatio?: (ratio: string) => void;
+  isGoogleSearchEnabled: boolean;
+  onToggleGoogleSearch: () => void;
+  isCodeExecutionEnabled: boolean;
+  onToggleCodeExecution: () => void;
+  isUrlContextEnabled: boolean;
+  onToggleUrlContext: () => void;
+  onClearChat: () => void;
+  onOpenSettings: () => void;
+  onToggleCanvasPrompt: () => void;
+  onTogglePinCurrentSession: () => void;
+  onRetryLastTurn: () => void;
+  onEditLastUserMessage: () => void;
+  
+  t: (key: keyof typeof translations, fallback?: string) => string;
 }
